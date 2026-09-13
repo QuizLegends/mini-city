@@ -1,48 +1,68 @@
 html,
 body,
 #root {
-  margin: 0;
   width: 100%;
   height: 100%;
+  margin: 0;
+  padding: 0;
+
   overflow: hidden;
-  font-family: Arial, sans-serif;
+
   background: #111;
+
+  font-family:
+    Arial,
+    Helvetica,
+    sans-serif;
+
+  touch-action: none;
+
+  user-select: none;
+
+  -webkit-user-select: none;
 }
+
 
 .app {
   width: 100%;
   height: 100%;
+
   position: relative;
+
+  overflow: hidden;
 }
+
 
 canvas {
   display: block;
+
+  width: 100%;
+  height: 100%;
 }
 
 
-/* =========================
+/* =========================================================
    MENU
-========================= */
+========================================================= */
 
 .menu {
   position: absolute;
 
-  z-index: 5;
-
   inset: 0;
 
-  display: flex;
+  z-index: 100;
 
-  flex-direction: column;
+  display: flex;
 
   align-items: center;
 
   justify-content: center;
 
   background:
-    linear-gradient(
-      #0008,
-      #000d
+    radial-gradient(
+      circle at center,
+      rgba(50, 80, 65, 0.35),
+      rgba(0, 0, 0, 0.95)
     );
 
   color: white;
@@ -50,154 +70,498 @@ canvas {
   text-align: center;
 }
 
-.menu h1 {
-  font-size: 56px;
 
-  margin: 0 0 8px;
+.menu-card {
+  width: min(
+    90vw,
+    480px
+  );
 
-  letter-spacing: 5px;
+  padding: 45px 30px;
+
+  border-radius: 20px;
+
+  background:
+    rgba(
+      10,
+      14,
+      15,
+      0.9
+    );
+
+  border:
+    1px solid
+    rgba(
+      255,
+      255,
+      255,
+      0.1
+    );
+
+  box-shadow:
+    0 30px 100px
+    rgba(
+      0,
+      0,
+      0,
+      0.7
+    );
+
+  backdrop-filter:
+    blur(12px);
 }
 
-.menu p {
-  max-width: 420px;
 
-  opacity: 0.85;
+.logo {
+  font-size: 54px;
+
+  font-weight: 900;
+
+  letter-spacing: 7px;
+
+  margin-bottom: 4px;
 }
 
-.menu button {
-  margin: 25px;
 
-  padding: 15px 45px;
+.subtitle {
+  font-size: 13px;
+
+  letter-spacing: 6px;
+
+  opacity: 0.55;
+
+  margin-bottom: 25px;
+}
+
+
+.menu-card p {
+  line-height: 1.6;
+
+  color:
+    rgba(
+      255,
+      255,
+      255,
+      0.7
+    );
+}
+
+
+.play-button {
+  margin-top: 20px;
+
+  width: 220px;
+
+  padding: 17px;
 
   border: 0;
 
-  border-radius: 8px;
+  border-radius: 10px;
 
-  background: #d62839;
+  background:
+    linear-gradient(
+      135deg,
+      #0e9b55,
+      #056331
+    );
 
   color: white;
 
-  font-weight: bold;
-
   font-size: 18px;
+
+  font-weight: 900;
+
+  letter-spacing: 3px;
+
+  cursor: pointer;
+
+  box-shadow:
+    0 10px 30px
+    rgba(
+      0,
+      120,
+      70,
+      0.35
+    );
 }
 
-.menu small {
-  opacity: 0.7;
+
+.play-button:active {
+  transform: scale(0.97);
 }
 
 
-/* =========================
+.controls-info {
+  margin-top: 30px;
+
+  display: flex;
+
+  justify-content: center;
+
+  gap: 12px;
+
+  flex-wrap: wrap;
+
+  font-size: 12px;
+
+  opacity: 0.55;
+}
+
+
+/* =========================================================
    HUD
-========================= */
+========================================================= */
 
 .hud {
   position: absolute;
 
-  z-index: 4;
+  top: 15px;
 
   left: 16px;
 
   right: 16px;
 
-  top: 14px;
-
-  color: white;
-
-  text-shadow:
-    0 2px 5px #000;
+  z-index: 20;
 
   pointer-events: none;
 
   display: flex;
 
-  justify-content: space-between;
-
   align-items: center;
-}
 
-.hud b {
-  font-size: 20px;
-}
-
-.hud span {
-  font-size: 14px;
-}
-
-
-/* =========================
-   CONTROLES MOBILE
-========================= */
-
-.mobile {
-  display: none;
-
-  pointer-events: auto;
-}
-
-.mobile button {
-  border: 1px solid #fff6;
-
-  background: #1119;
+  justify-content: space-between;
 
   color: white;
 
-  border-radius: 10px;
-
-  width: 52px;
-
-  height: 45px;
-
-  margin: 3px;
-
-  font-weight: bold;
+  text-shadow:
+    0 2px 5px
+    rgba(
+      0,
+      0,
+      0,
+      0.9
+    );
 }
 
 
-/* =========================
-   CELULAR
-========================= */
+.game-title {
+  font-weight: 900;
 
-@media (max-width: 700px) {
+  font-size: 20px;
 
-  .hud {
-    align-items: flex-start;
+  letter-spacing: 3px;
+}
+
+
+.message {
+  font-size: 13px;
+
+  opacity: 0.85;
+
+  text-align: center;
+
+  max-width: 50%;
+}
+
+
+/* =========================================================
+   JOYSTICK
+========================================================= */
+
+.joystick {
+  position: absolute;
+
+  z-index: 30;
+
+  left: 28px;
+
+  bottom: 35px;
+
+  width: 145px;
+
+  height: 145px;
+
+  border-radius: 50%;
+
+  background:
+    radial-gradient(
+      circle,
+      rgba(
+        255,
+        255,
+        255,
+        0.12
+      ),
+      rgba(
+        255,
+        255,
+        255,
+        0.04
+      )
+    );
+
+  border:
+    2px solid
+    rgba(
+      255,
+      255,
+      255,
+      0.15
+    );
+
+  box-shadow:
+    inset 0 0 30px
+    rgba(
+      0,
+      0,
+      0,
+      0.4
+    );
+
+  touch-action: none;
+}
+
+
+.joystick::before {
+  content: "";
+
+  position: absolute;
+
+  inset: 15px;
+
+  border-radius: 50%;
+
+  border:
+    1px solid
+    rgba(
+      255,
+      255,
+      255,
+      0.08
+    );
+}
+
+
+.joystick-knob {
+  position: absolute;
+
+  width: 62px;
+
+  height: 62px;
+
+  left: 50%;
+
+  top: 50%;
+
+  margin-left: -31px;
+
+  margin-top: -31px;
+
+  border-radius: 50%;
+
+  background:
+    radial-gradient(
+      circle at 35% 30%,
+      #8dffa9,
+      #087b42
+    );
+
+  border:
+    2px solid
+    rgba(
+      255,
+      255,
+      255,
+      0.35
+    );
+
+  box-shadow:
+    0 7px 20px
+    rgba(
+      0,
+      0,
+      0,
+      0.5
+    );
+
+  transition:
+    transform
+    0.05s
+    linear;
+}
+
+
+/* =========================================================
+   BOTÃO E
+========================================================= */
+
+.action-button {
+  position: absolute;
+
+  z-index: 40;
+
+  right: 35px;
+
+  bottom: 70px;
+
+  width: 76px;
+
+  height: 76px;
+
+  border-radius: 50%;
+
+  border:
+    2px solid
+    rgba(
+      255,
+      255,
+      255,
+      0.3
+    );
+
+  background:
+    radial-gradient(
+      circle,
+      #d0a62c,
+      #765a0d
+    );
+
+  color: white;
+
+  font-size: 28px;
+
+  font-weight: 900;
+
+  box-shadow:
+    0 8px 25px
+    rgba(
+      0,
+      0,
+      0,
+      0.5
+    );
+
+  touch-action: none;
+}
+
+
+.action-button:active {
+  transform: scale(0.9);
+}
+
+
+/* =========================================================
+   ÁREA DA CÂMERA
+========================================================= */
+
+.camera-touch {
+  position: absolute;
+
+  z-index: 10;
+
+  inset: 0;
+
+  pointer-events: auto;
+
+  touch-action: none;
+}
+
+
+/* =========================================================
+   TEXTO DE AJUDA
+========================================================= */
+
+.camera-help {
+  position: absolute;
+
+  right: 25px;
+
+  bottom: 25px;
+
+  z-index: 35;
+
+  color: white;
+
+  font-size: 10px;
+
+  letter-spacing: 1px;
+
+  opacity: 0.35;
+
+  pointer-events: none;
+}
+
+
+/* =========================================================
+   DESKTOP
+========================================================= */
+
+@media (
+  min-width: 800px
+) {
+
+  .joystick {
+    opacity: 0.65;
   }
 
 
-  .hud span {
-    display: none;
+  .action-button {
+    opacity: 0.65;
+  }
+
+}
+
+
+/* =========================================================
+   CELULAR PEQUENO
+========================================================= */
+
+@media (
+  max-width: 500px
+) {
+
+  .joystick {
+    width: 125px;
+
+    height: 125px;
+
+    left: 20px;
+
+    bottom: 25px;
   }
 
 
-  .mobile {
-    display: block;
+  .joystick-knob {
+    width: 54px;
 
-    position: fixed;
+    height: 54px;
 
-    bottom: 15px;
+    margin-left: -27px;
 
-    left: 10px;
-
-    right: 10px;
+    margin-top: -27px;
   }
 
 
-  .mobile > button:last-child {
+  .action-button {
+    width: 68px;
 
-    position: fixed;
+    height: 68px;
 
-    right: 20px;
+    right: 25px;
 
     bottom: 55px;
+  }
 
-    width: 65px;
 
-    height: 65px;
+  .logo {
+    font-size: 42px;
 
-    border-radius: 50%;
+    letter-spacing: 5px;
+  }
 
-    background: #c62838;
+
+  .message {
+    display: none;
   }
 
 }
