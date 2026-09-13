@@ -14,7 +14,8 @@ import {
 
 import {
   Sky,
-  useGLTF
+  useGLTF,
+  Center
 } from "@react-three/drei";
 
 import * as THREE from "three";
@@ -28,7 +29,6 @@ import "./style.css";
 
 const CITY_LIMIT = 38;
 const PLAYER_HEIGHT = 1.75;
-const CAR_HEIGHT = 0.0; // o modelo real já tem a altura correta
 
 
 /* =========================================================
@@ -153,7 +153,6 @@ function City({ obstacles }) {
 
   return (
     <>
-      {/* Chão */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
         <planeGeometry args={[100, 100]} />
         <meshStandardMaterial color="#4a4e52" roughness={0.95} />
@@ -161,13 +160,11 @@ function City({ obstacles }) {
 
       <Box position={[0, 0.01, 0]} scale={[90, 0.04, 90]} color="#6b6760" castShadow={false} />
 
-      {/* Estradas */}
       <Box position={[0, 0.04, 0]} scale={[14, 0.06, 90]} color="#1e2124" castShadow={false} />
       <Box position={[0, 0.04, 0]} scale={[90, 0.06, 14]} color="#1e2124" castShadow={false} />
       <Box position={[-26, 0.05, 0]} scale={[7, 0.05, 90]} color="#2a2d31" castShadow={false} />
       <Box position={[26, 0.05, 0]} scale={[7, 0.05, 90]} color="#2a2d31" castShadow={false} />
 
-      {/* Faixas */}
       {Array.from({ length: 13 }).map((_, i) => (
         <Box
           key={"stripe-z-" + i}
@@ -187,7 +184,6 @@ function City({ obstacles }) {
         />
       ))}
 
-      {/* Prédios */}
       {buildings.map((b, i) => (
         <group key={"b-" + i}>
           <Box
@@ -202,20 +198,9 @@ function City({ obstacles }) {
             color="#3a3e42"
             castShadow={false}
           />
-          {Array.from({ length: Math.min(5, Math.floor(b[4] / 2.4)) }).map((_, row) => (
-            <group key={"win-" + row}>
-              <Box
-                position={[b[0], 1.6 + row * 2.5, b[2] - b[5] / 2 - 0.04]}
-                scale={[Math.min(b[3] * 0.7, 5), 0.7, 0.06]}
-                color="#1a2a35"
-                castShadow={false}
-              />
-            </group>
-          ))}
         </group>
       ))}
 
-      {/* Estádio */}
       <group position={[0, 0.05, 24]}>
         <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
           <ringGeometry args={[10, 15.5, 64]} />
@@ -225,27 +210,18 @@ function City({ obstacles }) {
           <circleGeometry args={[9.5, 64]} />
           <meshStandardMaterial color="#1e6b35" roughness={0.85} />
         </mesh>
-        <mesh position={[0, 2.2, 0]} rotation={[Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[12.8, 2.4, 10, 64]} />
-          <meshStandardMaterial color="#c8c8c8" roughness={0.7} />
-        </mesh>
       </group>
 
-      {/* Árvores */}
       {[
         [-36, -34], [-22, -22], [22, -22], [36, -34],
         [-36, 6], [36, 6], [-36, 35], [36, 35],
-        [-18, 18], [18, 18], [-8, -18], [10, -8]
+        [-18, 18], [18, 18]
       ].map(([x, z], i) => (
         <group key={"tree-" + i} position={[x, 0, z]}>
-          <Cylinder position={[0, 1.5, 0]} scale={[0.32, 1.5, 0.32]} color="#4a3220" roughness={0.9} />
+          <Cylinder position={[0, 1.5, 0]} scale={[0.32, 1.5, 0.32]} color="#4a3220" />
           <mesh position={[0, 3.4, 0]} castShadow>
             <sphereGeometry args={[1.9, 14, 12]} />
             <meshStandardMaterial color="#1e6b32" roughness={0.8} />
-          </mesh>
-          <mesh position={[0.5, 3.0, 0.4]} castShadow>
-            <sphereGeometry args={[1.2, 12, 10]} />
-            <meshStandardMaterial color="#247a3a" roughness={0.8} />
           </mesh>
         </group>
       ))}
@@ -342,7 +318,7 @@ function Player({ playerRef, inCar, playerAnimation }) {
 
 
 /* =========================================================
-   CARRO REAL (350Z.glb)
+   CARRO REAL (com auto-escala e centralização)
 ========================================================= */
 
 function Car({ carRef, playerRef, inCar }) {
@@ -350,15 +326,39 @@ function Car({ carRef, playerRef, inCar }) {
   const velocity = useRef(0);
   const steering = useRef(0);
 
-  // Clona o modelo para evitar problemas de reutilização
   const model = useMemo(() => {
     const clone = scene.clone(true);
+
+    // Calcula o tamanho real do modelo
+    const box = new THREE.Box3().setFromObject(clone);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+
+    console.log("Tamanho do modelo 350Z:", size);
+
+    // Queremos que o carro tenha cerca de 4.5 metros de comprimento
+    const targetLength = 4.5;
+    const currentLength = Math.max(size.x, size.z);
+    const scale = currentLength > 0.01 ? targetLength / currentLength : 1;
+
+    clone.scale.setScalar(scale);
+
+    // Centraliza o modelo
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    clone.position.sub(center.multiplyScalar(scale));
+
+    // Coloca o carro no chão
+    const box2 = new THREE.Box3().setFromObject(clone);
+    clone.position.y -= box2.min.y;
+
     clone.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true;
         child.receiveShadow = true;
       }
     });
+
     return clone;
   }, [scene]);
 
@@ -369,7 +369,6 @@ function Car({ carRef, playerRef, inCar }) {
       const keys = window.__keys || {};
       const joy = window.__joystick || { x: 0, y: 0 };
 
-      // Frente = acelerar (corrigido)
       const throttle = keys.w ? 1 : keys.s ? -1 : -joy.y;
       const turn = keys.a ? 1 : keys.d ? -1 : -joy.x;
 
@@ -379,21 +378,17 @@ function Car({ carRef, playerRef, inCar }) {
 
       steering.current = THREE.MathUtils.lerp(steering.current, turn, 7 * delta);
 
-      // Rotação do carro
       carRef.current.rotation.y +=
         steering.current * delta * 1.6 * Math.min(1, Math.abs(velocity.current) / 4);
 
-      // Movimento para frente (modelo geralmente aponta para -Z ou +Z)
       const forward = new THREE.Vector3(0, 0, -1);
       forward.applyQuaternion(carRef.current.quaternion);
 
       carRef.current.position.addScaledVector(forward, velocity.current * delta);
 
-      // Limites da cidade
       carRef.current.position.x = clamp(carRef.current.position.x, -CITY_LIMIT, CITY_LIMIT);
       carRef.current.position.z = clamp(carRef.current.position.z, -CITY_LIMIT, CITY_LIMIT);
 
-      // Mantém o player "dentro" do carro (invisível)
       if (playerRef.current) {
         playerRef.current.position.copy(carRef.current.position);
         playerRef.current.position.y = PLAYER_HEIGHT;
@@ -402,19 +397,12 @@ function Car({ carRef, playerRef, inCar }) {
   });
 
   return (
-    <group
-      ref={carRef}
-      position={[0, CAR_HEIGHT, -8]}
-      // Ajuste de escala e rotação se o modelo estiver torto ou grande demais
-      scale={[1.1, 1.1, 1.1]}
-      rotation={[0, Math.PI, 0]} // gira 180° se o carro estiver de costas
-    >
+    <group ref={carRef} position={[0, 0, -8]}>
       <primitive object={model} />
     </group>
   );
 }
 
-// Preload do modelo
 useGLTF.preload("/models/350z.glb");
 
 
@@ -446,14 +434,11 @@ function collides(position, obstacles, radius = 0.75) {
    CONTROLE DO PERSONAGEM
 ========================================================= */
 
-function PlayerController({ playerRef, carRef, inCar, obstacles, setAnimation, setInCar }) {
+function PlayerController({ playerRef, carRef, inCar, obstacles, setAnimation }) {
   const velocity = useRef(new THREE.Vector3());
 
   useFrame((_, delta) => {
-    if (!playerRef.current) return;
-
-    // Quando está no carro, não controla o personagem
-    if (inCar) {
+    if (!playerRef.current || inCar) {
       setAnimation("idle");
       return;
     }
@@ -535,14 +520,9 @@ function Game({ setMessage }) {
   const [inCar, setInCar] = useState(false);
   const [animation, setAnimation] = useState("idle");
 
-  // Teclado
   useEffect(() => {
-    const down = (e) => {
-      window.__keys[e.key.toLowerCase()] = true;
-    };
-    const up = (e) => {
-      window.__keys[e.key.toLowerCase()] = false;
-    };
+    const down = (e) => { window.__keys[e.key.toLowerCase()] = true; };
+    const up = (e) => { window.__keys[e.key.toLowerCase()] = false; };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     return () => {
@@ -551,55 +531,45 @@ function Game({ setMessage }) {
     };
   }, []);
 
-  // Mensagem
   useEffect(() => {
     setMessage(
       inCar
-        ? "DIRIGINDO  •  Toque E ou o botão para sair"
+        ? "DIRIGINDO  •  Toque E para sair"
         : "Aproxime-se do 350Z e toque E para entrar"
     );
   }, [inCar, setMessage]);
 
-  // ===== SISTEMA DE ENTRAR / SAIR DO CARRO (CORRIGIDO) =====
+  // Entrar / Sair
   useEffect(() => {
     const tryToggleCar = () => {
       if (!playerRef.current || !carRef.current) return;
 
       if (inCar) {
-        // SAIR do carro
         setInCar(false);
-
         const exitPos = new THREE.Vector3(-2.8, PLAYER_HEIGHT, 0);
         exitPos.applyQuaternion(carRef.current.quaternion);
         exitPos.add(carRef.current.position);
         playerRef.current.position.copy(exitPos);
-
         setMessage("Você saiu do 350Z");
       } else {
-        // ENTRAR no carro
         const distance = playerRef.current.position.distanceTo(carRef.current.position);
-        if (distance < 5) {
+        if (distance < 6) {
           setInCar(true);
           setMessage("Você entrou no 350Z");
         }
       }
     };
 
-    // Tecla E
     const onKeyDown = (e) => {
       if (e.key.toLowerCase() === "e" && !window.__ePressed) {
         window.__ePressed = true;
         tryToggleCar();
       }
     };
-
     const onKeyUp = (e) => {
-      if (e.key.toLowerCase() === "e") {
-        window.__ePressed = false;
-      }
+      if (e.key.toLowerCase() === "e") window.__ePressed = false;
     };
 
-    // Botão da tela também chama a mesma função
     window.__toggleCar = tryToggleCar;
 
     window.addEventListener("keydown", onKeyDown);
@@ -616,17 +586,9 @@ function Game({ setMessage }) {
     <>
       <City obstacles={obstacles} />
 
-      <Car
-        carRef={carRef}
-        playerRef={playerRef}
-        inCar={inCar}
-      />
+      <Car carRef={carRef} playerRef={playerRef} inCar={inCar} />
 
-      <Player
-        playerRef={playerRef}
-        inCar={inCar}
-        playerAnimation={animation}
-      />
+      <Player playerRef={playerRef} inCar={inCar} playerAnimation={animation} />
 
       <PlayerController
         playerRef={playerRef}
@@ -634,28 +596,19 @@ function Game({ setMessage }) {
         inCar={inCar}
         obstacles={obstacles}
         setAnimation={setAnimation}
-        setInCar={setInCar}
       />
 
-      <CameraController
-        target={inCar ? carRef : playerRef}
-        inCar={inCar}
-      />
+      <CameraController target={inCar ? carRef : playerRef} inCar={inCar} />
 
-      <ambientLight intensity={0.9} />
+      <ambientLight intensity={1.0} />
       <directionalLight
         position={[25, 40, 18]}
-        intensity={2.4}
+        intensity={2.6}
         castShadow
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
-        shadow-camera-far={90}
-        shadow-camera-left={-40}
-        shadow-camera-right={40}
-        shadow-camera-top={40}
-        shadow-camera-bottom={-40}
       />
-      <hemisphereLight args={["#87ceeb", "#3a4a3a", 0.4]} />
+      <hemisphereLight args={["#87ceeb", "#3a4a3a", 0.45]} />
       <fog attach="fog" args={["#a8c0d0", 40, 100]} />
     </>
   );
@@ -663,7 +616,7 @@ function Game({ setMessage }) {
 
 
 /* =========================================================
-   ANALÓGICO
+   ANALÓGICO + BOTÃO + CÂMERA TOUCH
 ========================================================= */
 
 function Joystick() {
@@ -673,7 +626,6 @@ function Joystick() {
 
   function move(e) {
     if (!active.current || !baseRef.current) return;
-
     const rect = baseRef.current.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
     const centerY = rect.top + rect.height / 2;
@@ -682,7 +634,6 @@ function Joystick() {
     let x = e.clientX - centerX;
     let y = e.clientY - centerY;
     const length = Math.sqrt(x * x + y * y);
-
     if (length > radius) {
       x = (x / length) * radius;
       y = (y / length) * radius;
@@ -706,9 +657,7 @@ function Joystick() {
     active.current = false;
     window.__joystick.x = 0;
     window.__joystick.y = 0;
-    if (knobRef.current) {
-      knobRef.current.style.transform = "translate(0px, 0px)";
-    }
+    if (knobRef.current) knobRef.current.style.transform = "translate(0px, 0px)";
   }
 
   return (
@@ -726,30 +675,18 @@ function Joystick() {
   );
 }
 
-
-/* =========================================================
-   BOTÃO E (agora funciona para entrar E sair)
-========================================================= */
-
 function ActionButton() {
   return (
     <button
       className="action-button"
       onPointerDown={() => {
-        if (window.__toggleCar) {
-          window.__toggleCar();
-        }
+        if (window.__toggleCar) window.__toggleCar();
       }}
     >
       E
     </button>
   );
 }
-
-
-/* =========================================================
-   CÂMERA TOUCH
-========================================================= */
 
 function CameraTouch() {
   const active = useRef(false);
@@ -766,13 +703,8 @@ function CameraTouch() {
     const dx = e.clientX - last.current.x;
     const dy = e.clientY - last.current.y;
     last.current = { x: e.clientX, y: e.clientY };
-
     window.__camera.yaw -= dx * 0.0055;
-    window.__camera.pitch = clamp(
-      window.__camera.pitch - dy * 0.0038,
-      -0.15,
-      0.75
-    );
+    window.__camera.pitch = clamp(window.__camera.pitch - dy * 0.0038, -0.15, 0.75);
   }
 
   function end() {
@@ -806,15 +738,8 @@ function App() {
           <div className="menu-card">
             <div className="logo">MINI CITY</div>
             <div className="subtitle">OPEN WORLD 3D</div>
-            <p>
-              Explore a small city,
-              walk around and drive
-              a tuned green sports car.
-            </p>
-            <button
-              className="play-button"
-              onClick={() => setStarted(true)}
-            >
+            <p>Explore a small city, walk around and drive a tuned sports car.</p>
+            <button className="play-button" onClick={() => setStarted(true)}>
               JOGAR
             </button>
             <div className="controls-info">
@@ -832,34 +757,24 @@ function App() {
             shadows
             dpr={[1, 1.5]}
             camera={{ position: [0, 6, 12], fov: 60, near: 0.1, far: 200 }}
-            gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping }}
+            gl={{ antialias: true }}
           >
-            <Sky sunPosition={[80, 30, 40]} turbidity={6} rayleigh={1.2} />
+            <Sky sunPosition={[80, 30, 40]} />
             <Game setMessage={setMessage} />
           </Canvas>
 
           <CameraTouch />
-
           <div className="hud">
             <div className="game-title">MINI CITY</div>
             <div className="message">{message}</div>
           </div>
-
           <Joystick />
           <ActionButton />
-
-          <div className="camera-help">
-            Arraste para olhar
-          </div>
+          <div className="camera-help">Arraste para olhar</div>
         </>
       )}
     </div>
   );
 }
-
-
-/* =========================================================
-   START
-========================================================= */
 
 createRoot(document.getElementById("root")).render(<App />);
