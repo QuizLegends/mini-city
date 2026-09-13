@@ -14,8 +14,7 @@ import {
 
 import {
   Sky,
-  useGLTF,
-  Center
+  useGLTF
 } from "@react-three/drei";
 
 import * as THREE from "three";
@@ -318,7 +317,7 @@ function Player({ playerRef, inCar, playerAnimation }) {
 
 
 /* =========================================================
-   CARRO REAL (com auto-escala e centralização)
+   CARRO REAL 350Z (corrigido)
 ========================================================= */
 
 function Car({ carRef, playerRef, inCar }) {
@@ -326,38 +325,96 @@ function Car({ carRef, playerRef, inCar }) {
   const velocity = useRef(0);
   const steering = useRef(0);
 
+  // Referências das rodas
+  const wheels = useRef([]);
+  const frontWheels = useRef([]);
+
   const model = useMemo(() => {
     const clone = scene.clone(true);
 
-    // Calcula o tamanho real do modelo
+    // Calcula o tamanho do modelo
     const box = new THREE.Box3().setFromObject(clone);
     const size = new THREE.Vector3();
     box.getSize(size);
 
-    console.log("Tamanho do modelo 350Z:", size);
+    console.log("Tamanho original do 350Z:", size.x.toFixed(2), size.y.toFixed(2), size.z.toFixed(2));
 
-    // Queremos que o carro tenha cerca de 4.5 metros de comprimento
-    const targetLength = 4.5;
+    // ===== ESCALA MAIOR =====
+    // Queremos o carro com cerca de 5.8 metros de comprimento
+    const targetLength = 5.8;
     const currentLength = Math.max(size.x, size.z);
-    const scale = currentLength > 0.01 ? targetLength / currentLength : 1;
+    const scale = currentLength > 0.01 ? targetLength / currentLength : 1.8;
 
     clone.scale.setScalar(scale);
 
-    // Centraliza o modelo
+    // Centraliza
     const center = new THREE.Vector3();
     box.getCenter(center);
     clone.position.sub(center.multiplyScalar(scale));
 
-    // Coloca o carro no chão
+    // Coloca no chão
     const box2 = new THREE.Box3().setFromObject(clone);
     clone.position.y -= box2.min.y;
+
+    // Procura as rodas pelo nome
+    const foundWheels = [];
+    const foundFront = [];
 
     clone.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true;
         child.receiveShadow = true;
+
+        const name = (child.name || "").toLowerCase();
+
+        // Tenta identificar rodas
+        if (
+          name.includes("wheel") ||
+          name.includes("tire") ||
+          name.includes("tyre") ||
+          name.includes("rim") ||
+          name.includes("roda") ||
+          name.includes("pneu")
+        ) {
+          foundWheels.push(child);
+
+          // Rodas da frente geralmente têm "front" ou "fl" / "fr" no nome
+          if (
+            name.includes("front") ||
+            name.includes("fl") ||
+            name.includes("fr") ||
+            name.includes("f_") ||
+            name.includes("frente")
+          ) {
+            foundFront.push(child);
+          }
+        }
       }
     });
+
+    // Se não encontrou pelo nome, tenta pela posição (as 4 meshes mais baixas)
+    if (foundWheels.length === 0) {
+      const meshes = [];
+      clone.traverse((child) => {
+        if (child.isMesh) {
+          const pos = new THREE.Vector3();
+          child.getWorldPosition(pos);
+          meshes.push({ mesh: child, y: pos.y });
+        }
+      });
+
+      meshes.sort((a, b) => a.y - b.y);
+      const lowest = meshes.slice(0, 8); // pega as mais baixas
+
+      lowest.forEach((item) => {
+        foundWheels.push(item.mesh);
+      });
+    }
+
+    console.log("Rodas encontradas:", foundWheels.length);
+
+    wheels.current = foundWheels;
+    frontWheels.current = foundFront.length > 0 ? foundFront : foundWheels.slice(0, 2);
 
     return clone;
   }, [scene]);
@@ -369,19 +426,22 @@ function Car({ carRef, playerRef, inCar }) {
       const keys = window.__keys || {};
       const joy = window.__joystick || { x: 0, y: 0 };
 
+      // Direção corrigida (frente = acelerar)
       const throttle = keys.w ? 1 : keys.s ? -1 : -joy.y;
       const turn = keys.a ? 1 : keys.d ? -1 : -joy.x;
 
-      velocity.current += throttle * 18 * delta;
-      velocity.current *= Math.pow(0.28, delta);
-      velocity.current = clamp(velocity.current, -9, 26);
+      velocity.current += throttle * 20 * delta;
+      velocity.current *= Math.pow(0.25, delta);
+      velocity.current = clamp(velocity.current, -10, 28);
 
-      steering.current = THREE.MathUtils.lerp(steering.current, turn, 7 * delta);
+      steering.current = THREE.MathUtils.lerp(steering.current, turn, 8 * delta);
 
+      // Rotação do carro
       carRef.current.rotation.y +=
-        steering.current * delta * 1.6 * Math.min(1, Math.abs(velocity.current) / 4);
+        steering.current * delta * 1.7 * Math.min(1, Math.abs(velocity.current) / 4);
 
-      const forward = new THREE.Vector3(0, 0, -1);
+      // ===== DIREÇÃO CORRIGIDA (vai para frente agora) =====
+      const forward = new THREE.Vector3(0, 0, 1);
       forward.applyQuaternion(carRef.current.quaternion);
 
       carRef.current.position.addScaledVector(forward, velocity.current * delta);
@@ -394,6 +454,23 @@ function Car({ carRef, playerRef, inCar }) {
         playerRef.current.position.y = PLAYER_HEIGHT;
       }
     }
+
+    // ===== ANIMAÇÃO DAS RODAS =====
+    const spin = velocity.current * delta * 2.2;
+
+    // Gira todas as rodas (rotação no eixo X)
+    wheels.current.forEach((wheel) => {
+      if (wheel) {
+        wheel.rotation.x += spin;
+      }
+    });
+
+    // Vira as rodas da frente (eixo Y)
+    frontWheels.current.forEach((wheel) => {
+      if (wheel) {
+        wheel.rotation.y = -steering.current * 0.55;
+      }
+    });
   });
 
   return (
@@ -488,7 +565,7 @@ function CameraController({ target, inCar }) {
     if (!target.current) return;
 
     const targetPos = target.current.position;
-    const distance = inCar ? 11 : 7.5;
+    const distance = inCar ? 12 : 7.5;
     const yaw = window.__camera.yaw;
     const pitch = window.__camera.pitch;
 
@@ -499,10 +576,10 @@ function CameraController({ target, inCar }) {
     );
 
     const desired = targetPos.clone().add(offset);
-    desired.y = Math.max(desired.y, 2.4);
+    desired.y = Math.max(desired.y, 2.5);
 
     camera.position.lerp(desired, 0.1);
-    camera.lookAt(targetPos.x, targetPos.y + (inCar ? 1.0 : 1.2), targetPos.z);
+    camera.lookAt(targetPos.x, targetPos.y + (inCar ? 1.2 : 1.2), targetPos.z);
   });
 
   return null;
@@ -539,21 +616,20 @@ function Game({ setMessage }) {
     );
   }, [inCar, setMessage]);
 
-  // Entrar / Sair
   useEffect(() => {
     const tryToggleCar = () => {
       if (!playerRef.current || !carRef.current) return;
 
       if (inCar) {
         setInCar(false);
-        const exitPos = new THREE.Vector3(-2.8, PLAYER_HEIGHT, 0);
+        const exitPos = new THREE.Vector3(-3.2, PLAYER_HEIGHT, 0);
         exitPos.applyQuaternion(carRef.current.quaternion);
         exitPos.add(carRef.current.position);
         playerRef.current.position.copy(exitPos);
         setMessage("Você saiu do 350Z");
       } else {
         const distance = playerRef.current.position.distanceTo(carRef.current.position);
-        if (distance < 6) {
+        if (distance < 7) {
           setInCar(true);
           setMessage("Você entrou no 350Z");
         }
@@ -585,11 +661,8 @@ function Game({ setMessage }) {
   return (
     <>
       <City obstacles={obstacles} />
-
       <Car carRef={carRef} playerRef={playerRef} inCar={inCar} />
-
       <Player playerRef={playerRef} inCar={inCar} playerAnimation={animation} />
-
       <PlayerController
         playerRef={playerRef}
         carRef={carRef}
@@ -597,7 +670,6 @@ function Game({ setMessage }) {
         obstacles={obstacles}
         setAnimation={setAnimation}
       />
-
       <CameraController target={inCar ? carRef : playerRef} inCar={inCar} />
 
       <ambientLight intensity={1.0} />
@@ -616,7 +688,7 @@ function Game({ setMessage }) {
 
 
 /* =========================================================
-   ANALÓGICO + BOTÃO + CÂMERA TOUCH
+   UI
 ========================================================= */
 
 function Joystick() {
