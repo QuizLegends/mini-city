@@ -1,0 +1,203 @@
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: Arial, sans-serif;
+  background: #111;
+}
+
+.app {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+canvas {
+  display: block;
+}
+
+
+/* =========================
+   MENU
+========================= */
+
+.menu {
+  position: absolute;
+
+  z-index: 5;
+
+  inset: 0;
+
+  display: flex;
+
+  flex-direction: column;
+
+  align-items: center;
+
+  justify-content: center;
+
+  background:
+    linear-gradient(
+      #0008,
+      #000d
+    );
+
+  color: white;
+
+  text-align: center;
+}
+
+.menu h1 {
+  font-size: 56px;
+
+  margin: 0 0 8px;
+
+  letter-spacing: 5px;
+}
+
+.menu p {
+  max-width: 420px;
+
+  opacity: 0.85;
+}
+
+.menu button {
+  margin: 25px;
+
+  padding: 15px 45px;
+
+  border: 0;
+
+  border-radius: 8px;
+
+  background: #d62839;
+
+  color: white;
+
+  font-weight: bold;
+
+  font-size: 18px;
+}
+
+.menu small {
+  opacity: 0.7;
+}
+
+
+/* =========================
+   HUD
+========================= */
+
+.hud {
+  position: absolute;
+
+  z-index: 4;
+
+  left: 16px;
+
+  right: 16px;
+
+  top: 14px;
+
+  color: white;
+
+  text-shadow:
+    0 2px 5px #000;
+
+  pointer-events: none;
+
+  display: flex;
+
+  justify-content: space-between;
+
+  align-items: center;
+}
+
+.hud b {
+  font-size: 20px;
+}
+
+.hud span {
+  font-size: 14px;
+}
+
+
+/* =========================
+   CONTROLES MOBILE
+========================= */
+
+.mobile {
+  display: none;
+
+  pointer-events: auto;
+}
+
+.mobile button {
+  border: 1px solid #fff6;
+
+  background: #1119;
+
+  color: white;
+
+  border-radius: 10px;
+
+  width: 52px;
+
+  height: 45px;
+
+  margin: 3px;
+
+  font-weight: bold;
+}
+
+
+/* =========================
+   CELULAR
+========================= */
+
+@media (max-width: 700px) {
+
+  .hud {
+    align-items: flex-start;
+  }
+
+
+  .hud span {
+    display: none;
+  }
+
+
+  .mobile {
+    display: block;
+
+    position: fixed;
+
+    bottom: 15px;
+
+    left: 10px;
+
+    right: 10px;
+  }
+
+
+  .mobile > button:last-child {
+
+    position: fixed;
+
+    right: 20px;
+
+    bottom: 55px;
+
+    width: 65px;
+
+    height: 65px;
+
+    border-radius: 50%;
+
+    background: #c62838;
+  }
+
+}
