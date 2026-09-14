@@ -25,14 +25,9 @@ import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.j
 import "./style.css";
 
 
-/* =========================================================
-   CONTROLES GLOBAIS
-========================================================= */
-
 window.__keys = {};
 window.__joystick = { x: 0, y: 0 };
 window.__camera = { yaw: 0, pitch: 0.32 };
-
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -56,7 +51,6 @@ function MapWorld({ mapRef, mapBounds }) {
     const targetSize = 160;
     const currentSize = Math.max(size.x, size.z);
     const scale = currentSize > 0.01 ? targetSize / currentSize : 1;
-
     clone.scale.setScalar(scale);
 
     const center = new THREE.Vector3();
@@ -93,36 +87,44 @@ useGLTF.preload("/models/mapa.glb");
 
 
 /* =========================================================
-   PERSONAGEM ANIMADO (corrigido T-pose + afundado)
+   PERSONAGEM
+   Troque o caminho se o arquivo tiver outro nome
 ========================================================= */
 
-function Player({ playerRef, inCar, isMoving }) {
-  // Troque o nome do arquivo se for outro
-  const { scene, animations } = useGLTF("/models/personagem.glb");
+const CHAR_PATH = "/models/personagem.glb";
+// Se for scifi_girl: "/models/scifi_girl_v.01.glb"
 
-  // Clone CORRETO para personagem com esqueleto
+function Player({ playerRef, inCar, isMoving }) {
+  const { scene, animations } = useGLTF(CHAR_PATH);
+  const { actions, names } = useAnimations(animations, playerRef);
+  const currentAnim = useRef(null);
+  const footOffset = useRef(0);
+
   const clone = useMemo(() => {
     const c = skeletonClone(scene);
 
+    // Escala mais controlada (personagens Mixamo costumam vir grandes)
     const box = new THREE.Box3().setFromObject(c);
     const size = new THREE.Vector3();
     box.getSize(size);
 
-    // Altura do personagem ~1.7m
-    const targetHeight = 1.7;
+    const targetHeight = 1.65;
     const scale = size.y > 0.01 ? targetHeight / size.y : 1;
     c.scale.setScalar(scale);
 
-    // Centraliza no eixo XZ
+    // Recalcula caixa depois da escala
     box.setFromObject(c);
     const center = new THREE.Vector3();
     box.getCenter(center);
     c.position.x -= center.x;
     c.position.z -= center.z;
 
-    // Pés no chão (y = 0 local)
+    // Pés em y=0 no espaço local do modelo
     box.setFromObject(c);
     c.position.y -= box.min.y;
+
+    // Guarda offset dos pés (quase 0 se deu certo)
+    footOffset.current = 0;
 
     c.traverse((child) => {
       if (child.isMesh) {
@@ -134,78 +136,88 @@ function Player({ playerRef, inCar, isMoving }) {
     return c;
   }, [scene]);
 
-  // Animações ligadas ao group do personagem
-  const { actions, names, mixer } = useAnimations(animations, playerRef);
-  const currentAnim = useRef("");
-
-  // Inicia idle ao carregar
+  // NÃO inicia walk sozinho — só idle ou parado
   useEffect(() => {
     if (!actions || names.length === 0) {
-      console.log("Sem animações no modelo. Nomes:", names);
+      console.log("Animações:", names);
       return;
     }
 
     console.log("Animações encontradas:", names);
 
-    const findAnim = (keywords) =>
-      names.find((n) => keywords.some((k) => n.toLowerCase().includes(k)));
+    // Para TODAS no começo
+    names.forEach((n) => {
+      if (actions[n]) {
+        actions[n].stop();
+        actions[n].reset();
+      }
+    });
 
-    const idleName =
-      findAnim(["idle", "stand", "wait", "breath", "tpose"]) || names[0];
+    const idleName = names.find((n) =>
+      /idle|stand|wait|breath|armature\|mixamo/i.test(n)
+    );
 
-    if (actions[idleName]) {
+    // Se tiver idle de verdade (não walk), toca
+    if (idleName && !/walk|run/i.test(idleName) && actions[idleName]) {
       actions[idleName].reset().fadeIn(0.15).play();
       actions[idleName].setLoop(THREE.LoopRepeat, Infinity);
       currentAnim.current = idleName;
     }
   }, [actions, names]);
 
-  // Troca walk / idle
+  // Controla walk SOMENTE com o analógico
   useEffect(() => {
     if (!actions || names.length === 0) return;
 
-    const findAnim = (keywords) =>
-      names.find((n) => keywords.some((k) => n.toLowerCase().includes(k)));
+    const walkName = names.find((n) =>
+      /walk|run|running|walking|move|locomotion/i.test(n)
+    );
+    const idleName = names.find(
+      (n) => /idle|stand|wait|breath/i.test(n) && !/walk|run/i.test(n)
+    );
 
-    const walkName =
-      findAnim(["walk", "run", "running", "walking", "move", "locomotion"]) ||
-      names[0];
-
-    const idleName =
-      findAnim(["idle", "stand", "wait", "breath"]) ||
-      names.find((n) => n !== walkName) ||
-      names[0];
-
-    const nextName = isMoving ? walkName : idleName;
-    if (!nextName || currentAnim.current === nextName) return;
-    if (!actions[nextName]) return;
-
-    const prev = currentAnim.current;
-    if (prev && actions[prev]) {
-      actions[prev].fadeOut(0.2);
-    }
-
-    actions[nextName].reset().fadeIn(0.2).play();
-    actions[nextName].setLoop(THREE.LoopRepeat, Infinity);
-    // Velocidade da animação de walk
     if (isMoving) {
-      actions[nextName].timeScale = 1.1;
+      // Andando → walk
+      if (walkName && actions[walkName]) {
+        if (currentAnim.current && currentAnim.current !== walkName && actions[currentAnim.current]) {
+          actions[currentAnim.current].fadeOut(0.15);
+        }
+        actions[walkName].reset().fadeIn(0.15).play();
+        actions[walkName].setLoop(THREE.LoopRepeat, Infinity);
+        actions[walkName].timeScale = 1.0;
+        currentAnim.current = walkName;
+      }
+    } else {
+      // Parado → para o walk (não fica em GIF eterno)
+      if (walkName && actions[walkName]) {
+        actions[walkName].fadeOut(0.15);
+      }
+
+      if (idleName && actions[idleName]) {
+        actions[idleName].reset().fadeIn(0.15).play();
+        actions[idleName].setLoop(THREE.LoopRepeat, Infinity);
+        currentAnim.current = idleName;
+      } else if (walkName && actions[walkName]) {
+        // Sem idle: congela no frame 0 do walk
+        actions[walkName].stop();
+        actions[walkName].reset();
+        currentAnim.current = null;
+      }
     }
-    currentAnim.current = nextName;
   }, [isMoving, actions, names]);
 
   return (
-    <group ref={playerRef} position={[0, 0.05, 0]} visible={!inCar} dispose={null}>
+    <group ref={playerRef} position={[0, 0, 0]} visible={!inCar} dispose={null}>
       <primitive object={clone} />
     </group>
   );
 }
 
-useGLTF.preload("/models/scifi_girl_v.01.glb");
+useGLTF.preload(CHAR_PATH);
 
 
 /* =========================================================
-   CARRO 350Z
+   CARRO
 ========================================================= */
 
 function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
@@ -240,19 +252,11 @@ function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
         child.castShadow = true;
         child.receiveShadow = true;
         const name = (child.name || "").toLowerCase();
-        if (
-          name.includes("wheel") ||
-          name.includes("tire") ||
-          name.includes("tyre") ||
-          name.includes("rim") ||
-          name.includes("roda") ||
-          name.includes("pneu")
-        ) {
+        if (name.includes("wheel") || name.includes("tire") || name.includes("tyre") || name.includes("rim")) {
           found.push(child);
         }
       }
     });
-
     wheels.current = found;
     return c;
   }, [scene]);
@@ -339,7 +343,7 @@ useGLTF.preload("/models/350z.glb");
 
 
 /* =========================================================
-   CONTROLE DO PERSONAGEM
+   CONTROLE DO PERSONAGEM + CHÃO
 ========================================================= */
 
 function PlayerController({
@@ -372,10 +376,10 @@ function PlayerController({
 
     if (direction.lengthSq() > 1) direction.normalize();
 
-    const moving = direction.lengthSq() > 0.01;
+    const moving = direction.lengthSq() > 0.02;
     setIsMoving(moving);
 
-    const speed = 6.5;
+    const speed = 6.0;
     velocity.current.lerp(direction.multiplyScalar(speed), 1 - Math.pow(0.0008, delta));
 
     const next = playerRef.current.position.clone().addScaledVector(velocity.current, delta);
@@ -386,39 +390,41 @@ function PlayerController({
       next.z = clamp(next.z, b.minZ, b.maxZ);
     }
 
-    // Colisão frontal
     if (mapRef.current && moving) {
       const ray = new THREE.Raycaster();
       const dir = direction.clone().normalize();
       const origin = playerRef.current.position.clone();
-      origin.y += 0.9;
+      origin.y += 0.8;
       ray.set(origin, dir);
-      ray.far = 1.2;
+      ray.far = 1.0;
       const hits = ray.intersectObject(mapRef.current, true);
-      if (hits.length === 0 || hits[0].distance > 0.7) {
+      if (hits.length === 0 || hits[0].distance > 0.55) {
         playerRef.current.position.x = next.x;
         playerRef.current.position.z = next.z;
       }
-    } else {
+    } else if (moving) {
       playerRef.current.position.x = next.x;
       playerRef.current.position.z = next.z;
     }
 
-    // Chão (sobe um pouco para não afundar)
+    // ===== GRUDAR NO CHÃO (corrige flutuação) =====
     if (mapRef.current) {
       const downRay = new THREE.Raycaster();
-      const origin = playerRef.current.position.clone();
-      origin.y += 5;
+      const origin = new THREE.Vector3(
+        playerRef.current.position.x,
+        playerRef.current.position.y + 6,
+        playerRef.current.position.z
+      );
       downRay.set(origin, new THREE.Vector3(0, -1, 0));
-      downRay.far = 15;
+      downRay.far = 20;
       const hits = downRay.intersectObject(mapRef.current, true);
       if (hits.length > 0) {
-        playerRef.current.position.y = hits[0].point.y + 0.02;
+        // Pés colados no ponto do chão
+        playerRef.current.position.y = hits[0].point.y;
       }
     }
 
     if (moving) {
-      // Personagem olha na direção do movimento
       playerRef.current.rotation.y = Math.atan2(direction.x, direction.z);
     }
   });
@@ -449,12 +455,12 @@ function CameraController({ target, inCar, mapRef }) {
     );
 
     let desired = targetPos.clone().add(offset);
-    desired.y = Math.max(desired.y, targetPos.y + 2.8);
+    desired.y = Math.max(desired.y, targetPos.y + 2.5);
 
     if (mapRef.current) {
       const ray = new THREE.Raycaster();
       const from = targetPos.clone();
-      from.y += 1.4;
+      from.y += 1.2;
       const dir = desired.clone().sub(from).normalize();
       const dist = from.distanceTo(desired);
       ray.set(from, dir);
@@ -462,12 +468,12 @@ function CameraController({ target, inCar, mapRef }) {
       const hits = ray.intersectObject(mapRef.current, true);
       if (hits.length > 0 && hits[0].distance < dist - 0.4) {
         desired = from.clone().add(dir.multiplyScalar(Math.max(2.5, hits[0].distance - 0.6)));
-        desired.y = Math.max(desired.y, targetPos.y + 2.2);
+        desired.y = Math.max(desired.y, targetPos.y + 2.0);
       }
     }
 
     camera.position.lerp(desired, 0.12);
-    camera.lookAt(targetPos.x, targetPos.y + (inCar ? 1.3 : 1.2), targetPos.z);
+    camera.lookAt(targetPos.x, targetPos.y + (inCar ? 1.3 : 1.1), targetPos.z);
   });
 
   return null;
@@ -705,10 +711,6 @@ function CameraTouch() {
   );
 }
 
-
-/* =========================================================
-   APP
-========================================================= */
 
 function App() {
   const [started, setStarted] = useState(false);
