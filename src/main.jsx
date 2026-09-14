@@ -9,7 +9,8 @@ import { createRoot } from "react-dom/client";
 
 import {
   Canvas,
-  useFrame
+  useFrame,
+  useThree
 } from "@react-three/fiber";
 
 import {
@@ -35,11 +36,11 @@ const PLAYER_HEIGHT = 1.75;
 
 window.__keys = {};
 window.__joystick = { x: 0, y: 0 };
-window.__camera = { yaw: 0, pitch: 0.28 };
+window.__camera = { yaw: 0, pitch: 0.32 };
 
 
 /* =========================================================
-   FUNÇÃO AUXILIAR
+   AUXILIARES
 ========================================================= */
 
 function clamp(value, min, max) {
@@ -48,7 +49,7 @@ function clamp(value, min, max) {
 
 
 /* =========================================================
-   CUBO / CILINDRO (usados no personagem)
+   CUBO / CILINDRO
 ========================================================= */
 
 function Box({
@@ -70,11 +71,7 @@ function Box({
       receiveShadow={receiveShadow}
     >
       <boxGeometry args={[1, 1, 1]} />
-      <meshStandardMaterial
-        color={color}
-        roughness={roughness}
-        metalness={metalness}
-      />
+      <meshStandardMaterial color={color} roughness={roughness} metalness={metalness} />
     </mesh>
   );
 }
@@ -83,68 +80,54 @@ function Cylinder({
   position,
   scale = [1, 1, 1],
   color,
-  rotation = [0, 0, 0],
-  metalness = 0,
-  roughness = 0.7
+  rotation = [0, 0, 0]
 }) {
   return (
-    <mesh
-      position={position}
-      scale={scale}
-      rotation={rotation}
-      castShadow
-    >
+    <mesh position={position} scale={scale} rotation={rotation} castShadow>
       <cylinderGeometry args={[1, 1, 1, 16]} />
-      <meshStandardMaterial
-        color={color}
-        roughness={roughness}
-        metalness={metalness}
-      />
+      <meshStandardMaterial color={color} roughness={0.7} />
     </mesh>
   );
 }
 
 
 /* =========================================================
-   MAPA .GLB
+   MAPA
 ========================================================= */
 
-function MapWorld({ mapBounds }) {
+function MapWorld({ mapRef, mapBounds }) {
   const { scene } = useGLTF("/models/mapa.glb");
 
   const model = useMemo(() => {
     const clone = scene.clone(true);
 
-    // Calcula tamanho original
     const box = new THREE.Box3().setFromObject(clone);
     const size = new THREE.Vector3();
     box.getSize(size);
 
-    // Ajusta escala do mapa (pode mudar depois se ficar grande/pequeno)
-    // Queremos um mapa com cerca de 80~120 metros de lado
-    const targetSize = 90;
+    // MAPA MAIOR (antes estava ~90, agora ~160)
+    const targetSize = 160;
     const currentSize = Math.max(size.x, size.z);
     const scale = currentSize > 0.01 ? targetSize / currentSize : 1;
 
     clone.scale.setScalar(scale);
 
-    // Centraliza
     const center = new THREE.Vector3();
     box.getCenter(center);
     clone.position.sub(center.multiplyScalar(scale));
 
-    // Coloca no chão (y = 0)
     const box2 = new THREE.Box3().setFromObject(clone);
     clone.position.y -= box2.min.y;
 
-    // Atualiza limites do mapa
     const finalBox = new THREE.Box3().setFromObject(clone);
     if (mapBounds) {
       mapBounds.current = {
-        minX: finalBox.min.x + 2,
-        maxX: finalBox.max.x - 2,
-        minZ: finalBox.min.z + 2,
-        maxZ: finalBox.max.z - 2
+        minX: finalBox.min.x + 3,
+        maxX: finalBox.max.x - 3,
+        minZ: finalBox.min.z + 3,
+        maxZ: finalBox.max.z - 3,
+        minY: finalBox.min.y,
+        maxY: finalBox.max.y
       };
     }
 
@@ -158,7 +141,7 @@ function MapWorld({ mapBounds }) {
     return clone;
   }, [scene, mapBounds]);
 
-  return <primitive object={model} />;
+  return <primitive ref={mapRef} object={model} />;
 }
 
 useGLTF.preload("/models/mapa.glb");
@@ -253,10 +236,11 @@ function Player({ playerRef, inCar, playerAnimation }) {
    CARRO 350Z
 ========================================================= */
 
-function Car({ carRef, playerRef, inCar, mapBounds }) {
+function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
   const { scene } = useGLTF("/models/350z.glb");
   const velocity = useRef(0);
   const steering = useRef(0);
+  const wheels = useRef([]);
 
   const model = useMemo(() => {
     const clone = scene.clone(true);
@@ -265,7 +249,7 @@ function Car({ carRef, playerRef, inCar, mapBounds }) {
     const size = new THREE.Vector3();
     box.getSize(size);
 
-    const targetLength = 5.5;
+    const targetLength = 5.2;
     const currentLength = Math.max(size.x, size.z);
     const scale = currentLength > 0.01 ? targetLength / currentLength : 1.8;
     clone.scale.setScalar(scale);
@@ -274,16 +258,46 @@ function Car({ carRef, playerRef, inCar, mapBounds }) {
     box.getCenter(center);
     clone.position.sub(center.multiplyScalar(scale));
 
+    // Coloca no chão + sobe um pouco para não afundar
     const box2 = new THREE.Box3().setFromObject(clone);
     clone.position.y -= box2.min.y;
+    clone.position.y += 0.18;
 
+    const found = [];
     clone.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true;
         child.receiveShadow = true;
+
+        const name = (child.name || "").toLowerCase();
+        if (
+          name.includes("wheel") ||
+          name.includes("tire") ||
+          name.includes("tyre") ||
+          name.includes("rim") ||
+          name.includes("roda") ||
+          name.includes("pneu")
+        ) {
+          found.push(child);
+        }
       }
     });
 
+    // Se não achar por nome, pega meshes baixas (sem mexer na hierarquia)
+    if (found.length === 0) {
+      const list = [];
+      clone.traverse((child) => {
+        if (child.isMesh) {
+          const p = new THREE.Vector3();
+          child.getWorldPosition(p);
+          list.push({ mesh: child, y: p.y });
+        }
+      });
+      list.sort((a, b) => a.y - b.y);
+      list.slice(0, 4).forEach((item) => found.push(item.mesh));
+    }
+
+    wheels.current = found;
     return clone;
   }, [scene]);
 
@@ -297,25 +311,59 @@ function Car({ carRef, playerRef, inCar, mapBounds }) {
       const throttle = keys.w ? 1 : keys.s ? -1 : -joy.y;
       const turn = keys.a ? 1 : keys.d ? -1 : -joy.x;
 
-      velocity.current += throttle * 20 * delta;
-      velocity.current *= Math.pow(0.25, delta);
-      velocity.current = clamp(velocity.current, -10, 28);
+      velocity.current += throttle * 18 * delta;
+      velocity.current *= Math.pow(0.28, delta);
+      velocity.current = clamp(velocity.current, -9, 26);
 
-      steering.current = THREE.MathUtils.lerp(steering.current, turn, 8 * delta);
+      steering.current = THREE.MathUtils.lerp(steering.current, turn, 7 * delta);
 
       carRef.current.rotation.y +=
-        steering.current * delta * 1.7 * Math.min(1, Math.abs(velocity.current) / 4);
+        steering.current * delta * 1.6 * Math.min(1, Math.abs(velocity.current) / 4);
 
       const forward = new THREE.Vector3(0, 0, 1);
       forward.applyQuaternion(carRef.current.quaternion);
 
-      carRef.current.position.addScaledVector(forward, velocity.current * delta);
+      const next = carRef.current.position.clone().addScaledVector(forward, velocity.current * delta);
 
-      // Limites do mapa
+      // Limites
       if (mapBounds.current) {
         const b = mapBounds.current;
-        carRef.current.position.x = clamp(carRef.current.position.x, b.minX, b.maxX);
-        carRef.current.position.z = clamp(carRef.current.position.z, b.minZ, b.maxZ);
+        next.x = clamp(next.x, b.minX, b.maxX);
+        next.z = clamp(next.z, b.minZ, b.maxZ);
+      }
+
+      // Colisão simples com o mapa (raycast para frente)
+      if (mapRef.current && Math.abs(velocity.current) > 0.3) {
+        const ray = new THREE.Raycaster();
+        const dir = forward.clone().normalize();
+        if (velocity.current < 0) dir.negate();
+
+        const origin = carRef.current.position.clone();
+        origin.y += 0.6;
+        ray.set(origin, dir);
+        ray.far = 2.5;
+
+        const hits = ray.intersectObject(mapRef.current, true);
+        if (hits.length === 0 || hits[0].distance > 1.8) {
+          carRef.current.position.copy(next);
+        } else {
+          velocity.current *= 0.3;
+        }
+      } else {
+        carRef.current.position.copy(next);
+      }
+
+      // Mantém no chão (raycast para baixo)
+      if (mapRef.current) {
+        const downRay = new THREE.Raycaster();
+        const origin = carRef.current.position.clone();
+        origin.y += 3;
+        downRay.set(origin, new THREE.Vector3(0, -1, 0));
+        downRay.far = 10;
+        const hits = downRay.intersectObject(mapRef.current, true);
+        if (hits.length > 0) {
+          carRef.current.position.y = hits[0].point.y + 0.15;
+        }
       }
 
       if (playerRef.current) {
@@ -323,10 +371,16 @@ function Car({ carRef, playerRef, inCar, mapBounds }) {
         playerRef.current.position.y = PLAYER_HEIGHT;
       }
     }
+
+    // Rodas girando (só rotação, sem mexer na hierarquia)
+    const spin = velocity.current * delta * 2.2;
+    wheels.current.forEach((w) => {
+      if (w) w.rotation.x += spin;
+    });
   });
 
   return (
-    <group ref={carRef} position={[3, 0, 3]}>
+    <group ref={carRef} position={[4, 0.2, 4]}>
       <primitive object={model} />
     </group>
   );
@@ -339,7 +393,7 @@ useGLTF.preload("/models/350z.glb");
    CONTROLE DO PERSONAGEM
 ========================================================= */
 
-function PlayerController({ playerRef, inCar, mapBounds, setAnimation }) {
+function PlayerController({ playerRef, inCar, mapBounds, mapRef, setAnimation }) {
   const velocity = useRef(new THREE.Vector3());
 
   useFrame((_, delta) => {
@@ -366,19 +420,48 @@ function PlayerController({ playerRef, inCar, mapBounds, setAnimation }) {
     const moving = direction.lengthSq() > 0.01;
     setAnimation(moving ? "walk" : "idle");
 
-    const speed = 6.8;
+    const speed = 6.5;
     velocity.current.lerp(direction.multiplyScalar(speed), 1 - Math.pow(0.0008, delta));
 
     const next = playerRef.current.position.clone().addScaledVector(velocity.current, delta);
 
-    // Limites do mapa
     if (mapBounds.current) {
       const b = mapBounds.current;
       next.x = clamp(next.x, b.minX, b.maxX);
       next.z = clamp(next.z, b.minZ, b.maxZ);
     }
 
-    playerRef.current.position.copy(next);
+    // Colisão frontal simples
+    if (mapRef.current && moving) {
+      const ray = new THREE.Raycaster();
+      const dir = direction.clone().normalize();
+      const origin = playerRef.current.position.clone();
+      origin.y += 0.9;
+      ray.set(origin, dir);
+      ray.far = 1.2;
+
+      const hits = ray.intersectObject(mapRef.current, true);
+      if (hits.length === 0 || hits[0].distance > 0.7) {
+        playerRef.current.position.x = next.x;
+        playerRef.current.position.z = next.z;
+      }
+    } else {
+      playerRef.current.position.x = next.x;
+      playerRef.current.position.z = next.z;
+    }
+
+    // Coloca o personagem no chão
+    if (mapRef.current) {
+      const downRay = new THREE.Raycaster();
+      const origin = playerRef.current.position.clone();
+      origin.y += 4;
+      downRay.set(origin, new THREE.Vector3(0, -1, 0));
+      downRay.far = 12;
+      const hits = downRay.intersectObject(mapRef.current, true);
+      if (hits.length > 0) {
+        playerRef.current.position.y = hits[0].point.y + PLAYER_HEIGHT;
+      }
+    }
 
     if (moving) {
       playerRef.current.rotation.y = Math.atan2(direction.x, direction.z);
@@ -390,29 +473,49 @@ function PlayerController({ playerRef, inCar, mapBounds, setAnimation }) {
 
 
 /* =========================================================
-   CÂMERA
+   CÂMERA MELHORADA (não entra nos prédios)
 ========================================================= */
 
-function CameraController({ target, inCar }) {
-  useFrame(({ camera }) => {
+function CameraController({ target, inCar, mapRef }) {
+  const { camera } = useThree();
+
+  useFrame(() => {
     if (!target.current) return;
 
     const targetPos = target.current.position;
-    const distance = inCar ? 12 : 7.5;
+    const idealDistance = inCar ? 13 : 8.5;
     const yaw = window.__camera.yaw;
-    const pitch = window.__camera.pitch;
+    const pitch = clamp(window.__camera.pitch, 0.12, 0.75);
 
     const offset = new THREE.Vector3(
-      Math.sin(yaw) * Math.cos(pitch) * distance,
-      Math.sin(pitch) * distance,
-      Math.cos(yaw) * Math.cos(pitch) * distance
+      Math.sin(yaw) * Math.cos(pitch) * idealDistance,
+      Math.sin(pitch) * idealDistance + (inCar ? 1.5 : 1.2),
+      Math.cos(yaw) * Math.cos(pitch) * idealDistance
     );
 
-    const desired = targetPos.clone().add(offset);
-    desired.y = Math.max(desired.y, 2.5);
+    let desired = targetPos.clone().add(offset);
+    desired.y = Math.max(desired.y, targetPos.y + 2.8);
 
-    camera.position.lerp(desired, 0.1);
-    camera.lookAt(targetPos.x, targetPos.y + 1.2, targetPos.z);
+    // Evita câmera dentro de prédios
+    if (mapRef.current) {
+      const ray = new THREE.Raycaster();
+      const from = targetPos.clone();
+      from.y += 1.4;
+      const dir = desired.clone().sub(from).normalize();
+      const dist = from.distanceTo(desired);
+
+      ray.set(from, dir);
+      ray.far = dist;
+
+      const hits = ray.intersectObject(mapRef.current, true);
+      if (hits.length > 0 && hits[0].distance < dist - 0.4) {
+        desired = from.clone().add(dir.multiplyScalar(Math.max(2.5, hits[0].distance - 0.6)));
+        desired.y = Math.max(desired.y, targetPos.y + 2.2);
+      }
+    }
+
+    camera.position.lerp(desired, 0.12);
+    camera.lookAt(targetPos.x, targetPos.y + (inCar ? 1.3 : 1.4), targetPos.z);
   });
 
   return null;
@@ -426,6 +529,7 @@ function CameraController({ target, inCar }) {
 function Game({ setMessage }) {
   const playerRef = useRef();
   const carRef = useRef();
+  const mapRef = useRef();
   const mapBounds = useRef(null);
 
   const [inCar, setInCar] = useState(false);
@@ -450,25 +554,21 @@ function Game({ setMessage }) {
     );
   }, [inCar, setMessage]);
 
-  // Entrar / Sair
   useEffect(() => {
     const tryToggleCar = () => {
       if (!carRef.current) return;
 
       if (inCar) {
         setInCar(false);
-
         if (playerRef.current) {
           const exitPos = new THREE.Vector3(-3.2, PLAYER_HEIGHT, 0);
           exitPos.applyQuaternion(carRef.current.quaternion);
           exitPos.add(carRef.current.position);
           playerRef.current.position.copy(exitPos);
         }
-
         setMessage("Você saiu do carro");
       } else {
         if (!playerRef.current) return;
-
         const distance = playerRef.current.position.distanceTo(carRef.current.position);
         if (distance < 7) {
           setInCar(true);
@@ -501,18 +601,16 @@ function Game({ setMessage }) {
 
   return (
     <>
-      {/* MAPA NOVO */}
-      <MapWorld mapBounds={mapBounds} />
+      <MapWorld mapRef={mapRef} mapBounds={mapBounds} />
 
-      {/* CARRO */}
       <Car
         carRef={carRef}
         playerRef={playerRef}
         inCar={inCar}
         mapBounds={mapBounds}
+        mapRef={mapRef}
       />
 
-      {/* PERSONAGEM */}
       <Player
         playerRef={playerRef}
         inCar={inCar}
@@ -523,24 +621,26 @@ function Game({ setMessage }) {
         playerRef={playerRef}
         inCar={inCar}
         mapBounds={mapBounds}
+        mapRef={mapRef}
         setAnimation={setAnimation}
       />
 
       <CameraController
         target={inCar ? carRef : playerRef}
         inCar={inCar}
+        mapRef={mapRef}
       />
 
-      <ambientLight intensity={1.1} />
+      <ambientLight intensity={1.15} />
       <directionalLight
-        position={[30, 50, 20]}
-        intensity={2.4}
+        position={[40, 55, 25]}
+        intensity={2.3}
         castShadow
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
       />
       <hemisphereLight args={["#87ceeb", "#4a5a4a", 0.5]} />
-      <fog attach="fog" args={["#b0c4d0", 40, 120]} />
+      <fog attach="fog" args={["#b0c4d0", 50, 140]} />
     </>
   );
 }
@@ -635,7 +735,7 @@ function CameraTouch() {
     const dy = e.clientY - last.current.y;
     last.current = { x: e.clientX, y: e.clientY };
     window.__camera.yaw -= dx * 0.0055;
-    window.__camera.pitch = clamp(window.__camera.pitch - dy * 0.0038, -0.15, 0.75);
+    window.__camera.pitch = clamp(window.__camera.pitch - dy * 0.0038, 0.12, 0.75);
   }
 
   function end() {
@@ -687,7 +787,7 @@ function App() {
           <Canvas
             shadows
             dpr={[1, 1.5]}
-            camera={{ position: [0, 8, 14], fov: 60, near: 0.1, far: 250 }}
+            camera={{ position: [0, 10, 16], fov: 55, near: 0.1, far: 300 }}
             gl={{ antialias: true }}
           >
             <Sky sunPosition={[80, 30, 40]} />
