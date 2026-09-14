@@ -100,7 +100,7 @@ useGLTF.preload("/models/mapa.glb");
 ========================================================= */
 
 function Player({ playerRef, inCar, isMoving }) {
-  const { scene, animations } = useGLTF("/models/scifi_girl_v.01.glb");
+  const { scene, animations } = useGLTF("/models/goku.glb");
   const { actions, names } = useAnimations(animations, playerRef);
   const currentAnim = useRef("");
 
