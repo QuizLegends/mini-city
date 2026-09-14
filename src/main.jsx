@@ -230,7 +230,7 @@ function City({ obstacles }) {
 
 
 /* =========================================================
-   PERSONAGEM
+   PERSONAGEM (corrigido - nunca some, só fica invisível)
 ========================================================= */
 
 function Player({ playerRef, inCar, playerAnimation }) {
@@ -245,7 +245,7 @@ function Player({ playerRef, inCar, playerAnimation }) {
 
     const time = state.clock.elapsedTime;
 
-    if (playerAnimation === "walk") {
+    if (playerAnimation === "walk" && !inCar) {
       const swing = Math.sin(time * 10) * 0.7;
       leftArm.current.rotation.x = swing;
       rightArm.current.rotation.x = -swing;
@@ -261,10 +261,8 @@ function Player({ playerRef, inCar, playerAnimation }) {
     }
   });
 
-  if (inCar) return null;
-
   return (
-    <group ref={playerRef} position={[0, PLAYER_HEIGHT, 0]}>
+    <group ref={playerRef} position={[0, PLAYER_HEIGHT, 0]} visible={!inCar}>
       <group ref={body}>
         <group ref={leftLeg} position={[-0.2, -0.55, 0]}>
           <Cylinder position={[0, -0.45, 0]} scale={[0.16, 0.55, 0.16]} color="#1a1e28" />
@@ -317,7 +315,7 @@ function Player({ playerRef, inCar, playerAnimation }) {
 
 
 /* =========================================================
-   CARRO REAL 350Z (corrigido)
+   CARRO REAL 350Z
 ========================================================= */
 
 function Car({ carRef, playerRef, inCar }) {
@@ -325,26 +323,20 @@ function Car({ carRef, playerRef, inCar }) {
   const velocity = useRef(0);
   const steering = useRef(0);
 
-  // Referências das rodas
-  const wheels = useRef([]);
-  const frontWheels = useRef([]);
+  const wheels = useRef([]);        // todas as rodas (para girar)
+  const steerPivots = useRef([]);   // eixos das rodas da frente (para virar)
 
   const model = useMemo(() => {
     const clone = scene.clone(true);
 
-    // Calcula o tamanho do modelo
     const box = new THREE.Box3().setFromObject(clone);
     const size = new THREE.Vector3();
     box.getSize(size);
 
-    console.log("Tamanho original do 350Z:", size.x.toFixed(2), size.y.toFixed(2), size.z.toFixed(2));
-
-    // ===== ESCALA MAIOR =====
-    // Queremos o carro com cerca de 5.8 metros de comprimento
+    // Escala maior
     const targetLength = 5.8;
     const currentLength = Math.max(size.x, size.z);
     const scale = currentLength > 0.01 ? targetLength / currentLength : 1.8;
-
     clone.scale.setScalar(scale);
 
     // Centraliza
@@ -356,65 +348,77 @@ function Car({ carRef, playerRef, inCar }) {
     const box2 = new THREE.Box3().setFromObject(clone);
     clone.position.y -= box2.min.y;
 
-    // Procura as rodas pelo nome
-    const foundWheels = [];
-    const foundFront = [];
-
+    // ===== ENCONTRA AS RODAS =====
+    const allMeshes = [];
     clone.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true;
         child.receiveShadow = true;
-
-        const name = (child.name || "").toLowerCase();
-
-        // Tenta identificar rodas
-        if (
-          name.includes("wheel") ||
-          name.includes("tire") ||
-          name.includes("tyre") ||
-          name.includes("rim") ||
-          name.includes("roda") ||
-          name.includes("pneu")
-        ) {
-          foundWheels.push(child);
-
-          // Rodas da frente geralmente têm "front" ou "fl" / "fr" no nome
-          if (
-            name.includes("front") ||
-            name.includes("fl") ||
-            name.includes("fr") ||
-            name.includes("f_") ||
-            name.includes("frente")
-          ) {
-            foundFront.push(child);
-          }
-        }
+        allMeshes.push(child);
       }
     });
 
-    // Se não encontrou pelo nome, tenta pela posição (as 4 meshes mais baixas)
-    if (foundWheels.length === 0) {
-      const meshes = [];
-      clone.traverse((child) => {
-        if (child.isMesh) {
-          const pos = new THREE.Vector3();
-          child.getWorldPosition(pos);
-          meshes.push({ mesh: child, y: pos.y });
-        }
-      });
+    // Pega as meshes mais baixas (provavelmente as rodas)
+    const withHeight = allMeshes.map((mesh) => {
+      const pos = new THREE.Vector3();
+      mesh.getWorldPosition(pos);
+      return { mesh, y: pos.y, x: pos.x, z: pos.z };
+    });
 
-      meshes.sort((a, b) => a.y - b.y);
-      const lowest = meshes.slice(0, 8); // pega as mais baixas
+    withHeight.sort((a, b) => a.y - b.y);
+    const lowest = withHeight.slice(0, 6); // pega as 6 mais baixas
 
-      lowest.forEach((item) => {
-        foundWheels.push(item.mesh);
-      });
-    }
+    const foundWheels = [];
+    const foundSteerPivots = [];
 
-    console.log("Rodas encontradas:", foundWheels.length);
+    lowest.forEach((item) => {
+      const wheel = item.mesh;
+      foundWheels.push(wheel);
 
-    wheels.current = foundWheels;
-    frontWheels.current = foundFront.length > 0 ? foundFront : foundWheels.slice(0, 2);
+      // Cria um eixo (pivot) para poder virar a roda
+      // Só nas rodas da frente (as que estão mais na frente do carro)
+      // Depois do scale, o carro costuma ter frente em +Z ou -Z
+    });
+
+    // Separa frente e trás pelo eixo Z
+    lowest.sort((a, b) => a.z - b.z);
+    const frontOnes = lowest.slice(0, Math.ceil(lowest.length / 2));
+    const rearOnes = lowest.slice(Math.ceil(lowest.length / 2));
+
+    // Cria pivots de direção só nas rodas da frente
+    frontOnes.forEach((item) => {
+      const wheel = item.mesh;
+      const parent = wheel.parent;
+
+      if (!parent) return;
+
+      const pivot = new THREE.Group();
+      parent.add(pivot);
+
+      // Coloca o pivot na mesma posição da roda
+      pivot.position.copy(wheel.position);
+      pivot.rotation.copy(wheel.rotation);
+      pivot.scale.copy(wheel.scale);
+
+      // Move a roda para dentro do pivot (posição zero relativa)
+      wheel.position.set(0, 0, 0);
+      wheel.rotation.set(0, 0, 0);
+      wheel.scale.set(1, 1, 1);
+
+      pivot.add(wheel);
+
+      foundSteerPivots.push(pivot);
+      foundWheels.push(wheel);
+    });
+
+    // Rodas de trás só giram
+    rearOnes.forEach((item) => {
+      foundWheels.push(item.mesh);
+    });
+
+    // Remove duplicatas
+    wheels.current = [...new Set(foundWheels)];
+    steerPivots.current = foundSteerPivots;
 
     return clone;
   }, [scene]);
@@ -426,7 +430,6 @@ function Car({ carRef, playerRef, inCar }) {
       const keys = window.__keys || {};
       const joy = window.__joystick || { x: 0, y: 0 };
 
-      // Direção corrigida (frente = acelerar)
       const throttle = keys.w ? 1 : keys.s ? -1 : -joy.y;
       const turn = keys.a ? 1 : keys.d ? -1 : -joy.x;
 
@@ -436,11 +439,9 @@ function Car({ carRef, playerRef, inCar }) {
 
       steering.current = THREE.MathUtils.lerp(steering.current, turn, 8 * delta);
 
-      // Rotação do carro
       carRef.current.rotation.y +=
         steering.current * delta * 1.7 * Math.min(1, Math.abs(velocity.current) / 4);
 
-      // ===== DIREÇÃO CORRIGIDA (vai para frente agora) =====
       const forward = new THREE.Vector3(0, 0, 1);
       forward.applyQuaternion(carRef.current.quaternion);
 
@@ -449,26 +450,23 @@ function Car({ carRef, playerRef, inCar }) {
       carRef.current.position.x = clamp(carRef.current.position.x, -CITY_LIMIT, CITY_LIMIT);
       carRef.current.position.z = clamp(carRef.current.position.z, -CITY_LIMIT, CITY_LIMIT);
 
+      // Mantém o player junto (mesmo invisível)
       if (playerRef.current) {
         playerRef.current.position.copy(carRef.current.position);
         playerRef.current.position.y = PLAYER_HEIGHT;
       }
     }
 
-    // ===== ANIMAÇÃO DAS RODAS =====
-    const spin = velocity.current * delta * 2.2;
-
-    // Gira todas as rodas (rotação no eixo X)
+    // ===== RODAS GIRANDO =====
+    const spin = velocity.current * delta * 2.4;
     wheels.current.forEach((wheel) => {
-      if (wheel) {
-        wheel.rotation.x += spin;
-      }
+      if (wheel) wheel.rotation.x += spin;
     });
 
-    // Vira as rodas da frente (eixo Y)
-    frontWheels.current.forEach((wheel) => {
-      if (wheel) {
-        wheel.rotation.y = -steering.current * 0.55;
+    // ===== RODAS DA FRENTE VIRANDO =====
+    steerPivots.current.forEach((pivot) => {
+      if (pivot) {
+        pivot.rotation.y = -steering.current * 0.6;
       }
     });
   });
@@ -511,7 +509,7 @@ function collides(position, obstacles, radius = 0.75) {
    CONTROLE DO PERSONAGEM
 ========================================================= */
 
-function PlayerController({ playerRef, carRef, inCar, obstacles, setAnimation }) {
+function PlayerController({ playerRef, inCar, obstacles, setAnimation }) {
   const velocity = useRef(new THREE.Vector3());
 
   useFrame((_, delta) => {
@@ -579,7 +577,7 @@ function CameraController({ target, inCar }) {
     desired.y = Math.max(desired.y, 2.5);
 
     camera.position.lerp(desired, 0.1);
-    camera.lookAt(targetPos.x, targetPos.y + (inCar ? 1.2 : 1.2), targetPos.z);
+    camera.lookAt(targetPos.x, targetPos.y + 1.2, targetPos.z);
   });
 
   return null;
@@ -616,18 +614,27 @@ function Game({ setMessage }) {
     );
   }, [inCar, setMessage]);
 
+  // ===== ENTRAR / SAIR (CORRIGIDO) =====
   useEffect(() => {
     const tryToggleCar = () => {
-      if (!playerRef.current || !carRef.current) return;
+      if (!carRef.current) return;
 
       if (inCar) {
+        // SAIR
         setInCar(false);
-        const exitPos = new THREE.Vector3(-3.2, PLAYER_HEIGHT, 0);
-        exitPos.applyQuaternion(carRef.current.quaternion);
-        exitPos.add(carRef.current.position);
-        playerRef.current.position.copy(exitPos);
+
+        if (playerRef.current) {
+          const exitPos = new THREE.Vector3(-3.2, PLAYER_HEIGHT, 0);
+          exitPos.applyQuaternion(carRef.current.quaternion);
+          exitPos.add(carRef.current.position);
+          playerRef.current.position.copy(exitPos);
+        }
+
         setMessage("Você saiu do 350Z");
       } else {
+        // ENTRAR
+        if (!playerRef.current) return;
+
         const distance = playerRef.current.position.distanceTo(carRef.current.position);
         if (distance < 7) {
           setInCar(true);
@@ -635,6 +642,8 @@ function Game({ setMessage }) {
         }
       }
     };
+
+    window.__toggleCar = tryToggleCar;
 
     const onKeyDown = (e) => {
       if (e.key.toLowerCase() === "e" && !window.__ePressed) {
@@ -645,8 +654,6 @@ function Game({ setMessage }) {
     const onKeyUp = (e) => {
       if (e.key.toLowerCase() === "e") window.__ePressed = false;
     };
-
-    window.__toggleCar = tryToggleCar;
 
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
@@ -665,7 +672,6 @@ function Game({ setMessage }) {
       <Player playerRef={playerRef} inCar={inCar} playerAnimation={animation} />
       <PlayerController
         playerRef={playerRef}
-        carRef={carRef}
         inCar={inCar}
         obstacles={obstacles}
         setAnimation={setAnimation}
