@@ -35,6 +35,16 @@ function clamp(value, min, max) {
 
 
 /* =========================================================
+   CAMINHO DO PERSONAGEM
+   Ajuste se o nome do arquivo for outro
+========================================================= */
+
+const CHAR_PATH = "/models/personagem.glb";
+// exemplos:
+// const CHAR_PATH = "/models/scifi_girl_v.01.glb";
+
+
+/* =========================================================
    MAPA
 ========================================================= */
 
@@ -87,127 +97,95 @@ useGLTF.preload("/models/mapa.glb");
 
 
 /* =========================================================
-   PERSONAGEM
-   Troque o caminho se o arquivo tiver outro nome
+   PERSONAGEM (escala + animação corrigidas)
 ========================================================= */
-
-const CHAR_PATH = "/models/personagem.glb";
-// Se for scifi_girl: "/models/scifi_girl_v.01.glb"
 
 function Player({ playerRef, inCar, isMoving }) {
   const { scene, animations } = useGLTF(CHAR_PATH);
-  const { actions, names } = useAnimations(animations, playerRef);
-  const currentAnim = useRef(null);
-  const footOffset = useRef(0);
 
+  // Clone do esqueleto (sem escalar aqui)
   const clone = useMemo(() => {
     const c = skeletonClone(scene);
-
-    // Escala mais controlada (personagens Mixamo costumam vir grandes)
-    const box = new THREE.Box3().setFromObject(c);
-    const size = new THREE.Vector3();
-    box.getSize(size);
-
-    const targetHeight = 1.65;
-    const scale = size.y > 0.01 ? targetHeight / size.y : 1;
-    c.scale.setScalar(scale);
-
-    // Recalcula caixa depois da escala
-    box.setFromObject(c);
-    const center = new THREE.Vector3();
-    box.getCenter(center);
-    c.position.x -= center.x;
-    c.position.z -= center.z;
-
-    // Pés em y=0 no espaço local do modelo
-    box.setFromObject(c);
-    c.position.y -= box.min.y;
-
-    // Guarda offset dos pés (quase 0 se deu certo)
-    footOffset.current = 0;
-
     c.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true;
         child.receiveShadow = true;
       }
     });
-
     return c;
   }, [scene]);
 
-  // NÃO inicia walk sozinho — só idle ou parado
+  // Mede o tamanho ORIGINAL e define escala no group
+  const charScale = useMemo(() => {
+    const box = new THREE.Box3().setFromObject(scene);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const h = size.y || 1;
+
+    // Se veio em cm (Mixamo ~160–180), escala ~0.01
+    // Se já estiver em metros (~1.6–2), escala ~1
+    let s = 1.65 / h;
+    // limites de segurança
+    if (s > 5) s = 0.01;
+    if (s < 0.001) s = 0.01;
+    console.log("Altura original do personagem:", h.toFixed(2), "→ escala:", s.toFixed(4));
+    return s;
+  }, [scene]);
+
+  const { actions, names } = useAnimations(animations, playerRef);
+  const current = useRef(null);
+
+  // Lista animações uma vez
   useEffect(() => {
-    if (!actions || names.length === 0) {
-      console.log("Animações:", names);
-      return;
-    }
+    console.log("Animações do GLB:", names);
+  }, [names]);
 
-    console.log("Animações encontradas:", names);
-
-    // Para TODAS no começo
-    names.forEach((n) => {
-      if (actions[n]) {
-        actions[n].stop();
-        actions[n].reset();
-      }
-    });
-
-    const idleName = names.find((n) =>
-      /idle|stand|wait|breath|armature\|mixamo/i.test(n)
-    );
-
-    // Se tiver idle de verdade (não walk), toca
-    if (idleName && !/walk|run/i.test(idleName) && actions[idleName]) {
-      actions[idleName].reset().fadeIn(0.15).play();
-      actions[idleName].setLoop(THREE.LoopRepeat, Infinity);
-      currentAnim.current = idleName;
-    }
-  }, [actions, names]);
-
-  // Controla walk SOMENTE com o analógico
+  // Controla animação pelo analógico
   useEffect(() => {
     if (!actions || names.length === 0) return;
 
-    const walkName = names.find((n) =>
-      /walk|run|running|walking|move|locomotion/i.test(n)
-    );
+    const walkName =
+      names.find((n) => /walk|run|running|walking|move/i.test(n)) || names[0];
+
     const idleName = names.find(
       (n) => /idle|stand|wait|breath/i.test(n) && !/walk|run/i.test(n)
     );
 
+    // Para tudo primeiro
+    Object.values(actions).forEach((a) => {
+      if (a && a.isRunning && a.isRunning()) a.fadeOut(0.1);
+    });
+
     if (isMoving) {
-      // Andando → walk
-      if (walkName && actions[walkName]) {
-        if (currentAnim.current && currentAnim.current !== walkName && actions[currentAnim.current]) {
-          actions[currentAnim.current].fadeOut(0.15);
-        }
-        actions[walkName].reset().fadeIn(0.15).play();
-        actions[walkName].setLoop(THREE.LoopRepeat, Infinity);
-        actions[walkName].timeScale = 1.0;
-        currentAnim.current = walkName;
+      const act = actions[walkName];
+      if (act) {
+        act.reset().fadeIn(0.12).play();
+        act.setLoop(THREE.LoopRepeat, Infinity);
+        act.timeScale = 1.0;
+        current.current = walkName;
       }
     } else {
-      // Parado → para o walk (não fica em GIF eterno)
-      if (walkName && actions[walkName]) {
-        actions[walkName].fadeOut(0.15);
-      }
-
       if (idleName && actions[idleName]) {
-        actions[idleName].reset().fadeIn(0.15).play();
+        actions[idleName].reset().fadeIn(0.12).play();
         actions[idleName].setLoop(THREE.LoopRepeat, Infinity);
-        currentAnim.current = idleName;
+        current.current = idleName;
       } else if (walkName && actions[walkName]) {
-        // Sem idle: congela no frame 0 do walk
+        // Sem idle: congela
         actions[walkName].stop();
         actions[walkName].reset();
-        currentAnim.current = null;
+        current.current = null;
       }
     }
   }, [isMoving, actions, names]);
 
   return (
-    <group ref={playerRef} position={[0, 0, 0]} visible={!inCar} dispose={null}>
+    <group
+      ref={playerRef}
+      scale={[charScale, charScale, charScale]}
+      position={[0, 0, 0]}
+      visible={!inCar}
+      dispose={null}
+    >
       <primitive object={clone} />
     </group>
   );
@@ -252,7 +230,12 @@ function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
         child.castShadow = true;
         child.receiveShadow = true;
         const name = (child.name || "").toLowerCase();
-        if (name.includes("wheel") || name.includes("tire") || name.includes("tyre") || name.includes("rim")) {
+        if (
+          name.includes("wheel") ||
+          name.includes("tire") ||
+          name.includes("tyre") ||
+          name.includes("rim")
+        ) {
           found.push(child);
         }
       }
@@ -343,7 +326,7 @@ useGLTF.preload("/models/350z.glb");
 
 
 /* =========================================================
-   CONTROLE DO PERSONAGEM + CHÃO
+   CONTROLE
 ========================================================= */
 
 function PlayerController({
@@ -407,19 +390,18 @@ function PlayerController({
       playerRef.current.position.z = next.z;
     }
 
-    // ===== GRUDAR NO CHÃO (corrige flutuação) =====
+    // Chão
     if (mapRef.current) {
       const downRay = new THREE.Raycaster();
       const origin = new THREE.Vector3(
         playerRef.current.position.x,
-        playerRef.current.position.y + 6,
+        playerRef.current.position.y + 8,
         playerRef.current.position.z
       );
       downRay.set(origin, new THREE.Vector3(0, -1, 0));
-      downRay.far = 20;
+      downRay.far = 25;
       const hits = downRay.intersectObject(mapRef.current, true);
       if (hits.length > 0) {
-        // Pés colados no ponto do chão
         playerRef.current.position.y = hits[0].point.y;
       }
     }
