@@ -20,6 +20,7 @@ import {
 } from "@react-three/drei";
 
 import * as THREE from "three";
+import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 
 import "./style.css";
 
@@ -32,10 +33,6 @@ window.__keys = {};
 window.__joystick = { x: 0, y: 0 };
 window.__camera = { yaw: 0, pitch: 0.32 };
 
-
-/* =========================================================
-   AUXILIARES
-========================================================= */
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -96,53 +93,79 @@ useGLTF.preload("/models/mapa.glb");
 
 
 /* =========================================================
-   PERSONAGEM - SCIFI GIRL
+   PERSONAGEM ANIMADO (corrigido T-pose + afundado)
 ========================================================= */
 
 function Player({ playerRef, inCar, isMoving }) {
+  // Troque o nome do arquivo se for outro
   const { scene, animations } = useGLTF("/models/personagem.glb");
-  const { actions, names } = useAnimations(animations, playerRef);
-  const currentAnim = useRef("");
 
-  const model = useMemo(() => {
-    const clone = scene.clone(true);
+  // Clone CORRETO para personagem com esqueleto
+  const clone = useMemo(() => {
+    const c = skeletonClone(scene);
 
-    const box = new THREE.Box3().setFromObject(clone);
+    const box = new THREE.Box3().setFromObject(c);
     const size = new THREE.Vector3();
     box.getSize(size);
 
-    // Altura ~1.7m
+    // Altura do personagem ~1.7m
     const targetHeight = 1.7;
     const scale = size.y > 0.01 ? targetHeight / size.y : 1;
-    clone.scale.setScalar(scale);
+    c.scale.setScalar(scale);
 
+    // Centraliza no eixo XZ
+    box.setFromObject(c);
     const center = new THREE.Vector3();
     box.getCenter(center);
-    clone.position.x -= center.x * scale;
-    clone.position.z -= center.z * scale;
+    c.position.x -= center.x;
+    c.position.z -= center.z;
 
-    const box2 = new THREE.Box3().setFromObject(clone);
-    clone.position.y -= box2.min.y;
+    // Pés no chão (y = 0 local)
+    box.setFromObject(c);
+    c.position.y -= box.min.y;
 
-    clone.traverse((child) => {
+    c.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true;
         child.receiveShadow = true;
       }
     });
 
-    return clone;
+    return c;
   }, [scene]);
 
-  // Animações: walk quando anda, idle quando para
+  // Animações ligadas ao group do personagem
+  const { actions, names, mixer } = useAnimations(animations, playerRef);
+  const currentAnim = useRef("");
+
+  // Inicia idle ao carregar
+  useEffect(() => {
+    if (!actions || names.length === 0) {
+      console.log("Sem animações no modelo. Nomes:", names);
+      return;
+    }
+
+    console.log("Animações encontradas:", names);
+
+    const findAnim = (keywords) =>
+      names.find((n) => keywords.some((k) => n.toLowerCase().includes(k)));
+
+    const idleName =
+      findAnim(["idle", "stand", "wait", "breath", "tpose"]) || names[0];
+
+    if (actions[idleName]) {
+      actions[idleName].reset().fadeIn(0.15).play();
+      actions[idleName].setLoop(THREE.LoopRepeat, Infinity);
+      currentAnim.current = idleName;
+    }
+  }, [actions, names]);
+
+  // Troca walk / idle
   useEffect(() => {
     if (!actions || names.length === 0) return;
 
-    const findAnim = (keywords) => {
-      return names.find((n) =>
-        keywords.some((k) => n.toLowerCase().includes(k))
-      );
-    };
+    const findAnim = (keywords) =>
+      names.find((n) => keywords.some((k) => n.toLowerCase().includes(k)));
 
     const walkName =
       findAnim(["walk", "run", "running", "walking", "move", "locomotion"]) ||
@@ -154,31 +177,26 @@ function Player({ playerRef, inCar, isMoving }) {
       names[0];
 
     const nextName = isMoving ? walkName : idleName;
-
     if (!nextName || currentAnim.current === nextName) return;
+    if (!actions[nextName]) return;
 
-    if (currentAnim.current && actions[currentAnim.current]) {
-      actions[currentAnim.current].fadeOut(0.2);
+    const prev = currentAnim.current;
+    if (prev && actions[prev]) {
+      actions[prev].fadeOut(0.2);
     }
 
-    if (actions[nextName]) {
-      actions[nextName].reset().fadeIn(0.2).play();
-      actions[nextName].setLoop(THREE.LoopRepeat);
-      currentAnim.current = nextName;
+    actions[nextName].reset().fadeIn(0.2).play();
+    actions[nextName].setLoop(THREE.LoopRepeat, Infinity);
+    // Velocidade da animação de walk
+    if (isMoving) {
+      actions[nextName].timeScale = 1.1;
     }
+    currentAnim.current = nextName;
   }, [isMoving, actions, names]);
 
-  useEffect(() => {
-    if (names.length > 0) {
-      console.log("Animações do personagem:", names);
-    } else {
-      console.log("Personagem sem animações embutidas");
-    }
-  }, [names]);
-
   return (
-    <group ref={playerRef} position={[0, 0, 0]} visible={!inCar}>
-      <primitive object={model} />
+    <group ref={playerRef} position={[0, 0.05, 0]} visible={!inCar} dispose={null}>
+      <primitive object={clone} />
     </group>
   );
 }
@@ -197,27 +215,27 @@ function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
   const wheels = useRef([]);
 
   const model = useMemo(() => {
-    const clone = scene.clone(true);
+    const c = scene.clone(true);
 
-    const box = new THREE.Box3().setFromObject(clone);
+    const box = new THREE.Box3().setFromObject(c);
     const size = new THREE.Vector3();
     box.getSize(size);
 
     const targetLength = 5.2;
     const currentLength = Math.max(size.x, size.z);
     const scale = currentLength > 0.01 ? targetLength / currentLength : 1.8;
-    clone.scale.setScalar(scale);
+    c.scale.setScalar(scale);
 
     const center = new THREE.Vector3();
     box.getCenter(center);
-    clone.position.sub(center.multiplyScalar(scale));
+    c.position.sub(center.multiplyScalar(scale));
 
-    const box2 = new THREE.Box3().setFromObject(clone);
-    clone.position.y -= box2.min.y;
-    clone.position.y += 0.18;
+    const box2 = new THREE.Box3().setFromObject(c);
+    c.position.y -= box2.min.y;
+    c.position.y += 0.18;
 
     const found = [];
-    clone.traverse((child) => {
+    c.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true;
         child.receiveShadow = true;
@@ -235,21 +253,8 @@ function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
       }
     });
 
-    if (found.length === 0) {
-      const list = [];
-      clone.traverse((child) => {
-        if (child.isMesh) {
-          const p = new THREE.Vector3();
-          child.getWorldPosition(p);
-          list.push({ mesh: child, y: p.y });
-        }
-      });
-      list.sort((a, b) => a.y - b.y);
-      list.slice(0, 4).forEach((item) => found.push(item.mesh));
-    }
-
     wheels.current = found;
-    return clone;
+    return c;
   }, [scene]);
 
   useFrame((_, delta) => {
@@ -381,6 +386,7 @@ function PlayerController({
       next.z = clamp(next.z, b.minZ, b.maxZ);
     }
 
+    // Colisão frontal
     if (mapRef.current && moving) {
       const ray = new THREE.Raycaster();
       const dir = direction.clone().normalize();
@@ -398,19 +404,21 @@ function PlayerController({
       playerRef.current.position.z = next.z;
     }
 
+    // Chão (sobe um pouco para não afundar)
     if (mapRef.current) {
       const downRay = new THREE.Raycaster();
       const origin = playerRef.current.position.clone();
-      origin.y += 4;
+      origin.y += 5;
       downRay.set(origin, new THREE.Vector3(0, -1, 0));
-      downRay.far = 12;
+      downRay.far = 15;
       const hits = downRay.intersectObject(mapRef.current, true);
       if (hits.length > 0) {
-        playerRef.current.position.y = hits[0].point.y;
+        playerRef.current.position.y = hits[0].point.y + 0.02;
       }
     }
 
     if (moving) {
+      // Personagem olha na direção do movimento
       playerRef.current.rotation.y = Math.atan2(direction.x, direction.z);
     }
   });
