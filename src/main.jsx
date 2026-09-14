@@ -26,7 +26,6 @@ import "./style.css";
    CONFIGURAÇÕES
 ========================================================= */
 
-const CITY_LIMIT = 38;
 const PLAYER_HEIGHT = 1.75;
 
 
@@ -49,7 +48,7 @@ function clamp(value, min, max) {
 
 
 /* =========================================================
-   CUBO
+   CUBO / CILINDRO (usados no personagem)
 ========================================================= */
 
 function Box({
@@ -80,11 +79,6 @@ function Box({
   );
 }
 
-
-/* =========================================================
-   CILINDRO
-========================================================= */
-
 function Cylinder({
   position,
   scale = [1, 1, 1],
@@ -112,125 +106,66 @@ function Cylinder({
 
 
 /* =========================================================
-   CIDADE
+   MAPA .GLB
 ========================================================= */
 
-function City({ obstacles }) {
-  const buildings = [
-    [-29, 6, -28, 9, 12, 9],
-    [-16, 9, -30, 8, 18, 8],
-    [-2, 5, -30, 10, 10, 10],
-    [14, 7, -30, 9, 14, 9],
-    [29, 11, -27, 9, 22, 9],
-    [-30, 8, -12, 9, 16, 9],
-    [30, 6, -10, 11, 12, 11],
-    [-30, 12, 8, 8, 24, 8],
-    [31, 9, 10, 10, 18, 10],
-    [-27, 6, 29, 11, 12, 9],
-    [-12, 10, 29, 9, 20, 9],
-    [4, 6, 30, 11, 12, 11],
-    [20, 8, 29, 10, 16, 10],
-    [33, 13, 28, 8, 26, 8],
-    [22, 5, 12, 11, 10, 11],
-    [-8, 7, 12, 8, 14, 8],
-    [8, 4, -12, 9, 8, 9]
-  ];
+function MapWorld({ mapBounds }) {
+  const { scene } = useGLTF("/models/mapa.glb");
 
-  useEffect(() => {
-    obstacles.current = buildings.map(b => ({
-      minX: b[0] - b[3] / 2,
-      maxX: b[0] + b[3] / 2,
-      minZ: b[2] - b[5] / 2,
-      maxZ: b[2] + b[5] / 2
-    }));
-  }, []);
+  const model = useMemo(() => {
+    const clone = scene.clone(true);
 
-  const buildingColors = [
-    "#6e747a", "#8a6f5a", "#4f5f68", "#9a9180",
-    "#5c5a62", "#7a6b5c", "#5a6a72", "#8c8374"
-  ];
+    // Calcula tamanho original
+    const box = new THREE.Box3().setFromObject(clone);
+    const size = new THREE.Vector3();
+    box.getSize(size);
 
-  return (
-    <>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
-        <planeGeometry args={[100, 100]} />
-        <meshStandardMaterial color="#4a4e52" roughness={0.95} />
-      </mesh>
+    // Ajusta escala do mapa (pode mudar depois se ficar grande/pequeno)
+    // Queremos um mapa com cerca de 80~120 metros de lado
+    const targetSize = 90;
+    const currentSize = Math.max(size.x, size.z);
+    const scale = currentSize > 0.01 ? targetSize / currentSize : 1;
 
-      <Box position={[0, 0.01, 0]} scale={[90, 0.04, 90]} color="#6b6760" castShadow={false} />
+    clone.scale.setScalar(scale);
 
-      <Box position={[0, 0.04, 0]} scale={[14, 0.06, 90]} color="#1e2124" castShadow={false} />
-      <Box position={[0, 0.04, 0]} scale={[90, 0.06, 14]} color="#1e2124" castShadow={false} />
-      <Box position={[-26, 0.05, 0]} scale={[7, 0.05, 90]} color="#2a2d31" castShadow={false} />
-      <Box position={[26, 0.05, 0]} scale={[7, 0.05, 90]} color="#2a2d31" castShadow={false} />
+    // Centraliza
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    clone.position.sub(center.multiplyScalar(scale));
 
-      {Array.from({ length: 13 }).map((_, i) => (
-        <Box
-          key={"stripe-z-" + i}
-          position={[0, 0.08, -42 + i * 7]}
-          scale={[0.25, 0.02, 3.2]}
-          color="#e8d45a"
-          castShadow={false}
-        />
-      ))}
-      {Array.from({ length: 13 }).map((_, i) => (
-        <Box
-          key={"stripe-x-" + i}
-          position={[-42 + i * 7, 0.08, 0]}
-          scale={[3.2, 0.02, 0.25]}
-          color="#e8d45a"
-          castShadow={false}
-        />
-      ))}
+    // Coloca no chão (y = 0)
+    const box2 = new THREE.Box3().setFromObject(clone);
+    clone.position.y -= box2.min.y;
 
-      {buildings.map((b, i) => (
-        <group key={"b-" + i}>
-          <Box
-            position={[b[0], b[1] / 2, b[2]]}
-            scale={[b[3], b[4], b[5]]}
-            color={buildingColors[i % buildingColors.length]}
-            roughness={0.85}
-          />
-          <Box
-            position={[b[0], 0.4, b[2]]}
-            scale={[b[3] + 0.3, 0.8, b[5] + 0.3]}
-            color="#3a3e42"
-            castShadow={false}
-          />
-        </group>
-      ))}
+    // Atualiza limites do mapa
+    const finalBox = new THREE.Box3().setFromObject(clone);
+    if (mapBounds) {
+      mapBounds.current = {
+        minX: finalBox.min.x + 2,
+        maxX: finalBox.max.x - 2,
+        minZ: finalBox.min.z + 2,
+        maxZ: finalBox.max.z - 2
+      };
+    }
 
-      <group position={[0, 0.05, 24]}>
-        <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-          <ringGeometry args={[10, 15.5, 64]} />
-          <meshStandardMaterial color="#4a4f55" roughness={0.9} />
-        </mesh>
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
-          <circleGeometry args={[9.5, 64]} />
-          <meshStandardMaterial color="#1e6b35" roughness={0.85} />
-        </mesh>
-      </group>
+    clone.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
 
-      {[
-        [-36, -34], [-22, -22], [22, -22], [36, -34],
-        [-36, 6], [36, 6], [-36, 35], [36, 35],
-        [-18, 18], [18, 18]
-      ].map(([x, z], i) => (
-        <group key={"tree-" + i} position={[x, 0, z]}>
-          <Cylinder position={[0, 1.5, 0]} scale={[0.32, 1.5, 0.32]} color="#4a3220" />
-          <mesh position={[0, 3.4, 0]} castShadow>
-            <sphereGeometry args={[1.9, 14, 12]} />
-            <meshStandardMaterial color="#1e6b32" roughness={0.8} />
-          </mesh>
-        </group>
-      ))}
-    </>
-  );
+    return clone;
+  }, [scene, mapBounds]);
+
+  return <primitive object={model} />;
 }
+
+useGLTF.preload("/models/mapa.glb");
 
 
 /* =========================================================
-   PERSONAGEM (corrigido - nunca some, só fica invisível)
+   PERSONAGEM
 ========================================================= */
 
 function Player({ playerRef, inCar, playerAnimation }) {
@@ -315,16 +250,13 @@ function Player({ playerRef, inCar, playerAnimation }) {
 
 
 /* =========================================================
-   CARRO REAL 350Z
+   CARRO 350Z
 ========================================================= */
 
-function Car({ carRef, playerRef, inCar }) {
+function Car({ carRef, playerRef, inCar, mapBounds }) {
   const { scene } = useGLTF("/models/350z.glb");
   const velocity = useRef(0);
   const steering = useRef(0);
-
-  const wheels = useRef([]);        // todas as rodas (para girar)
-  const steerPivots = useRef([]);   // eixos das rodas da frente (para virar)
 
   const model = useMemo(() => {
     const clone = scene.clone(true);
@@ -333,92 +265,24 @@ function Car({ carRef, playerRef, inCar }) {
     const size = new THREE.Vector3();
     box.getSize(size);
 
-    // Escala maior
-    const targetLength = 5.8;
+    const targetLength = 5.5;
     const currentLength = Math.max(size.x, size.z);
     const scale = currentLength > 0.01 ? targetLength / currentLength : 1.8;
     clone.scale.setScalar(scale);
 
-    // Centraliza
     const center = new THREE.Vector3();
     box.getCenter(center);
     clone.position.sub(center.multiplyScalar(scale));
 
-    // Coloca no chão
     const box2 = new THREE.Box3().setFromObject(clone);
     clone.position.y -= box2.min.y;
 
-    // ===== ENCONTRA AS RODAS =====
-    const allMeshes = [];
     clone.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true;
         child.receiveShadow = true;
-        allMeshes.push(child);
       }
     });
-
-    // Pega as meshes mais baixas (provavelmente as rodas)
-    const withHeight = allMeshes.map((mesh) => {
-      const pos = new THREE.Vector3();
-      mesh.getWorldPosition(pos);
-      return { mesh, y: pos.y, x: pos.x, z: pos.z };
-    });
-
-    withHeight.sort((a, b) => a.y - b.y);
-    const lowest = withHeight.slice(0, 6); // pega as 6 mais baixas
-
-    const foundWheels = [];
-    const foundSteerPivots = [];
-
-    lowest.forEach((item) => {
-      const wheel = item.mesh;
-      foundWheels.push(wheel);
-
-      // Cria um eixo (pivot) para poder virar a roda
-      // Só nas rodas da frente (as que estão mais na frente do carro)
-      // Depois do scale, o carro costuma ter frente em +Z ou -Z
-    });
-
-    // Separa frente e trás pelo eixo Z
-    lowest.sort((a, b) => a.z - b.z);
-    const frontOnes = lowest.slice(0, Math.ceil(lowest.length / 2));
-    const rearOnes = lowest.slice(Math.ceil(lowest.length / 2));
-
-    // Cria pivots de direção só nas rodas da frente
-    frontOnes.forEach((item) => {
-      const wheel = item.mesh;
-      const parent = wheel.parent;
-
-      if (!parent) return;
-
-      const pivot = new THREE.Group();
-      parent.add(pivot);
-
-      // Coloca o pivot na mesma posição da roda
-      pivot.position.copy(wheel.position);
-      pivot.rotation.copy(wheel.rotation);
-      pivot.scale.copy(wheel.scale);
-
-      // Move a roda para dentro do pivot (posição zero relativa)
-      wheel.position.set(0, 0, 0);
-      wheel.rotation.set(0, 0, 0);
-      wheel.scale.set(1, 1, 1);
-
-      pivot.add(wheel);
-
-      foundSteerPivots.push(pivot);
-      foundWheels.push(wheel);
-    });
-
-    // Rodas de trás só giram
-    rearOnes.forEach((item) => {
-      foundWheels.push(item.mesh);
-    });
-
-    // Remove duplicatas
-    wheels.current = [...new Set(foundWheels)];
-    steerPivots.current = foundSteerPivots;
 
     return clone;
   }, [scene]);
@@ -447,32 +311,22 @@ function Car({ carRef, playerRef, inCar }) {
 
       carRef.current.position.addScaledVector(forward, velocity.current * delta);
 
-      carRef.current.position.x = clamp(carRef.current.position.x, -CITY_LIMIT, CITY_LIMIT);
-      carRef.current.position.z = clamp(carRef.current.position.z, -CITY_LIMIT, CITY_LIMIT);
+      // Limites do mapa
+      if (mapBounds.current) {
+        const b = mapBounds.current;
+        carRef.current.position.x = clamp(carRef.current.position.x, b.minX, b.maxX);
+        carRef.current.position.z = clamp(carRef.current.position.z, b.minZ, b.maxZ);
+      }
 
-      // Mantém o player junto (mesmo invisível)
       if (playerRef.current) {
         playerRef.current.position.copy(carRef.current.position);
         playerRef.current.position.y = PLAYER_HEIGHT;
       }
     }
-
-    // ===== RODAS GIRANDO =====
-    const spin = velocity.current * delta * 2.4;
-    wheels.current.forEach((wheel) => {
-      if (wheel) wheel.rotation.x += spin;
-    });
-
-    // ===== RODAS DA FRENTE VIRANDO =====
-    steerPivots.current.forEach((pivot) => {
-      if (pivot) {
-        pivot.rotation.y = -steering.current * 0.6;
-      }
-    });
   });
 
   return (
-    <group ref={carRef} position={[0, 0, -8]}>
+    <group ref={carRef} position={[3, 0, 3]}>
       <primitive object={model} />
     </group>
   );
@@ -482,34 +336,10 @@ useGLTF.preload("/models/350z.glb");
 
 
 /* =========================================================
-   COLISÃO
-========================================================= */
-
-function collides(position, obstacles, radius = 0.75) {
-  if (
-    position.x < -CITY_LIMIT ||
-    position.x > CITY_LIMIT ||
-    position.z < -CITY_LIMIT ||
-    position.z > CITY_LIMIT
-  ) return true;
-
-  for (const box of obstacles.current) {
-    if (
-      position.x > box.minX - radius &&
-      position.x < box.maxX + radius &&
-      position.z > box.minZ - radius &&
-      position.z < box.maxZ + radius
-    ) return true;
-  }
-  return false;
-}
-
-
-/* =========================================================
    CONTROLE DO PERSONAGEM
 ========================================================= */
 
-function PlayerController({ playerRef, inCar, obstacles, setAnimation }) {
+function PlayerController({ playerRef, inCar, mapBounds, setAnimation }) {
   const velocity = useRef(new THREE.Vector3());
 
   useFrame((_, delta) => {
@@ -541,9 +371,14 @@ function PlayerController({ playerRef, inCar, obstacles, setAnimation }) {
 
     const next = playerRef.current.position.clone().addScaledVector(velocity.current, delta);
 
-    if (!collides(next, obstacles, 0.6)) {
-      playerRef.current.position.copy(next);
+    // Limites do mapa
+    if (mapBounds.current) {
+      const b = mapBounds.current;
+      next.x = clamp(next.x, b.minX, b.maxX);
+      next.z = clamp(next.z, b.minZ, b.maxZ);
     }
+
+    playerRef.current.position.copy(next);
 
     if (moving) {
       playerRef.current.rotation.y = Math.atan2(direction.x, direction.z);
@@ -591,7 +426,8 @@ function CameraController({ target, inCar }) {
 function Game({ setMessage }) {
   const playerRef = useRef();
   const carRef = useRef();
-  const obstacles = useRef([]);
+  const mapBounds = useRef(null);
+
   const [inCar, setInCar] = useState(false);
   const [animation, setAnimation] = useState("idle");
 
@@ -610,17 +446,16 @@ function Game({ setMessage }) {
     setMessage(
       inCar
         ? "DIRIGINDO  •  Toque E para sair"
-        : "Aproxime-se do 350Z e toque E para entrar"
+        : "Aproxime-se do carro e toque E para entrar"
     );
   }, [inCar, setMessage]);
 
-  // ===== ENTRAR / SAIR (CORRIGIDO) =====
+  // Entrar / Sair
   useEffect(() => {
     const tryToggleCar = () => {
       if (!carRef.current) return;
 
       if (inCar) {
-        // SAIR
         setInCar(false);
 
         if (playerRef.current) {
@@ -630,15 +465,14 @@ function Game({ setMessage }) {
           playerRef.current.position.copy(exitPos);
         }
 
-        setMessage("Você saiu do 350Z");
+        setMessage("Você saiu do carro");
       } else {
-        // ENTRAR
         if (!playerRef.current) return;
 
         const distance = playerRef.current.position.distanceTo(carRef.current.position);
         if (distance < 7) {
           setInCar(true);
-          setMessage("Você entrou no 350Z");
+          setMessage("Você entrou no carro");
         }
       }
     };
@@ -667,27 +501,46 @@ function Game({ setMessage }) {
 
   return (
     <>
-      <City obstacles={obstacles} />
-      <Car carRef={carRef} playerRef={playerRef} inCar={inCar} />
-      <Player playerRef={playerRef} inCar={inCar} playerAnimation={animation} />
+      {/* MAPA NOVO */}
+      <MapWorld mapBounds={mapBounds} />
+
+      {/* CARRO */}
+      <Car
+        carRef={carRef}
+        playerRef={playerRef}
+        inCar={inCar}
+        mapBounds={mapBounds}
+      />
+
+      {/* PERSONAGEM */}
+      <Player
+        playerRef={playerRef}
+        inCar={inCar}
+        playerAnimation={animation}
+      />
+
       <PlayerController
         playerRef={playerRef}
         inCar={inCar}
-        obstacles={obstacles}
+        mapBounds={mapBounds}
         setAnimation={setAnimation}
       />
-      <CameraController target={inCar ? carRef : playerRef} inCar={inCar} />
 
-      <ambientLight intensity={1.0} />
+      <CameraController
+        target={inCar ? carRef : playerRef}
+        inCar={inCar}
+      />
+
+      <ambientLight intensity={1.1} />
       <directionalLight
-        position={[25, 40, 18]}
-        intensity={2.6}
+        position={[30, 50, 20]}
+        intensity={2.4}
         castShadow
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
       />
-      <hemisphereLight args={["#87ceeb", "#3a4a3a", 0.45]} />
-      <fog attach="fog" args={["#a8c0d0", 40, 100]} />
+      <hemisphereLight args={["#87ceeb", "#4a5a4a", 0.5]} />
+      <fog attach="fog" args={["#b0c4d0", 40, 120]} />
     </>
   );
 }
@@ -816,7 +669,7 @@ function App() {
           <div className="menu-card">
             <div className="logo">MINI CITY</div>
             <div className="subtitle">OPEN WORLD 3D</div>
-            <p>Explore a small city, walk around and drive a tuned sports car.</p>
+            <p>Explore o mapa, ande e dirija o 350Z.</p>
             <button className="play-button" onClick={() => setStarted(true)}>
               JOGAR
             </button>
@@ -834,7 +687,7 @@ function App() {
           <Canvas
             shadows
             dpr={[1, 1.5]}
-            camera={{ position: [0, 6, 12], fov: 60, near: 0.1, far: 200 }}
+            camera={{ position: [0, 8, 14], fov: 60, near: 0.1, far: 250 }}
             gl={{ antialias: true }}
           >
             <Sky sunPosition={[80, 30, 40]} />
