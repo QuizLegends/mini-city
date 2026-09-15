@@ -24,10 +24,10 @@ import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.j
 
 import "./style.css";
 
-
 window.__keys = {};
 window.__joystick = { x: 0, y: 0 };
 window.__camera = { yaw: 0, pitch: 0.32 };
+window.__cameraMode = "free";
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -122,7 +122,6 @@ function stickToGround(pos, mapObject, yOffset) {
   return pos.y;
 }
 
-
 const CHAR_PATH = "/models/personagem.glb";
 
 function Player({ playerRef, inCar, isMoving }) {
@@ -195,13 +194,11 @@ function Player({ playerRef, inCar, isMoving }) {
 
 useGLTF.preload(CHAR_PATH);
 
-
 function MapWorld({ mapRef, mapBounds }) {
   const { scene } = useGLTF("/models/mapa.glb");
 
   const model = useMemo(() => {
     const clone = scene.clone(true);
-
     const box = new THREE.Box3().setFromObject(clone);
     const size = new THREE.Vector3();
     box.getSize(size);
@@ -243,7 +240,6 @@ function MapWorld({ mapRef, mapBounds }) {
 
 useGLTF.preload("/models/mapa.glb");
 
-
 function GarageMarker() {
   return (
     <group position={[GARAGE_POS.x, 0, GARAGE_POS.z]}>
@@ -255,7 +251,6 @@ function GarageMarker() {
           emissiveIntensity={0.35}
         />
       </mesh>
-
       {[-5, 5].map((x) =>
         [-5, 5].map((z) => (
           <mesh key={x + "-" + z} position={[x, 2, z]} castShadow>
@@ -264,12 +259,10 @@ function GarageMarker() {
           </mesh>
         ))
       )}
-
       <mesh position={[0, 4, 0]} castShadow>
         <boxGeometry args={[1.6, 8, 1.6]} />
         <meshStandardMaterial color="#102028" metalness={0.5} roughness={0.4} />
       </mesh>
-
       <mesh position={[0, 7.2, 0.9]}>
         <boxGeometry args={[3.2, 1.2, 0.2]} />
         <meshStandardMaterial
@@ -278,7 +271,6 @@ function GarageMarker() {
           emissiveIntensity={2}
         />
       </mesh>
-
       <mesh position={[0, 0.12, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[4, 5.5, 32]} />
         <meshStandardMaterial
@@ -288,17 +280,14 @@ function GarageMarker() {
           side={THREE.DoubleSide}
         />
       </mesh>
-
       <pointLight position={[0, 6, 0]} intensity={1.4} distance={22} color="#00e5ff" />
     </group>
   );
 }
 
-
-/** Só meshes com nome de roda — NÃO usa fallback (evita sombra girando) */
 function findWheelMeshes(root) {
   const found = [];
-  const skip = /shadow|plane|ground|decal|glass|window|body|chassis|interior/i;
+  const skip = /shadow|plane|ground|decal|glass|window|body|chassis|interior|light/i;
 
   root.traverse((child) => {
     if (!child.isMesh) return;
@@ -315,7 +304,6 @@ function findWheelMeshes(root) {
       found.push(child);
     }
   });
-
   return found;
 }
 
@@ -348,10 +336,7 @@ function CarModel({ path, wheelsRef }) {
       }
     });
 
-    if (wheelsRef) {
-      wheelsRef.current = findWheelMeshes(c);
-    }
-
+    if (wheelsRef) wheelsRef.current = findWheelMeshes(c);
     return c;
   }, [scene, path, wheelsRef]);
 
@@ -370,7 +355,8 @@ function Car({
   inCar,
   mapBounds,
   mapRef,
-  carPath
+  carPath,
+  velocityRef
 }) {
   const velocity = useRef(0);
   const steering = useRef(0);
@@ -425,6 +411,8 @@ function Car({
       }
     }
 
+    if (velocityRef) velocityRef.current = velocity.current;
+
     const spin = velocity.current * delta * 2.4;
     const wheels = wheelsRef.current || [];
     for (let i = 0; i < wheels.length; i++) {
@@ -438,7 +426,6 @@ function Car({
     </group>
   );
 }
-
 
 function PlayerController({
   playerRef,
@@ -515,66 +502,119 @@ function PlayerController({
   return null;
 }
 
+/* =========================================================
+   CÂMERA: free (360°) | auto (frente/ré suave)
+========================================================= */
 
-function CameraController({ target, inCar, mapRef }) {
+function CameraController({
+  target,
+  inCar,
+  mapRef,
+  cameraMode,
+  carVelocityRef
+}) {
   const { camera } = useThree();
+  const yaw = useRef(window.__camera.yaw);
+  const pitch = useRef(0.28);
+  const smoothPos = useRef(null);
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     if (!target.current) return;
 
     const targetPos = target.current.position;
-    const idealDistance = inCar ? 13 : 8.5;
-    const yaw = window.__camera.yaw;
-    const pitch = clamp(window.__camera.pitch, 0.12, 0.75);
+    const dt = Math.min(delta, 0.05);
+
+    let desiredYaw;
+    let desiredPitch;
+    let desiredDist;
+    let lookHeight;
+    let turnSpeed;
+
+    if (cameraMode === "auto" && inCar) {
+      const forward = new THREE.Vector3(0, 0, 1);
+      forward.applyQuaternion(target.current.quaternion);
+
+      const speed = carVelocityRef?.current ?? 0;
+      const reversing = speed < -1.0;
+      const travel = reversing ? forward.clone().negate() : forward;
+
+      // atrás em relação ao movimento → mostra o caminho
+      desiredYaw = Math.atan2(travel.x, travel.z) + Math.PI;
+      desiredPitch = 0.3;
+      desiredDist = 13;
+      lookHeight = 1.15;
+      turnSpeed = 5.5;
+    } else {
+      desiredYaw = window.__camera.yaw;
+      desiredPitch = clamp(window.__camera.pitch, 0.12, 0.75);
+      desiredDist = inCar ? 13 : 8.5;
+      lookHeight = inCar ? 1.25 : 1.1;
+      turnSpeed = 12;
+    }
+
+    let dy = desiredYaw - yaw.current;
+    while (dy > Math.PI) dy -= Math.PI * 2;
+    while (dy < -Math.PI) dy += Math.PI * 2;
+    yaw.current += dy * Math.min(1, turnSpeed * dt);
+    pitch.current += (desiredPitch - pitch.current) * Math.min(1, 6 * dt);
 
     const offset = new THREE.Vector3(
-      Math.sin(yaw) * Math.cos(pitch) * idealDistance,
-      Math.sin(pitch) * idealDistance + (inCar ? 1.5 : 1.2),
-      Math.cos(yaw) * Math.cos(pitch) * idealDistance
+      Math.sin(yaw.current) * Math.cos(pitch.current) * desiredDist,
+      Math.sin(pitch.current) * desiredDist + (inCar ? 1.55 : 1.2),
+      Math.cos(yaw.current) * Math.cos(pitch.current) * desiredDist
     );
 
-    let desired = targetPos.clone().add(offset);
-    desired.y = Math.max(desired.y, targetPos.y + 2.5);
+    let desiredPos = targetPos.clone().add(offset);
+    desiredPos.y = Math.max(desiredPos.y, targetPos.y + 2.4);
 
     if (mapRef.current) {
       const ray = new THREE.Raycaster();
       const from = targetPos.clone();
       from.y += 1.2;
-      const dir = desired.clone().sub(from).normalize();
-      const dist = from.distanceTo(desired);
+      const dir = desiredPos.clone().sub(from).normalize();
+      const dist = from.distanceTo(desiredPos);
       ray.set(from, dir);
       ray.far = dist;
       const hits = ray.intersectObject(mapRef.current, true);
       if (hits.length > 0 && hits[0].distance < dist - 0.4) {
-        desired = from
+        desiredPos = from
           .clone()
-          .add(dir.multiplyScalar(Math.max(2.5, hits[0].distance - 0.6)));
-        desired.y = Math.max(desired.y, targetPos.y + 2.0);
+          .add(dir.multiplyScalar(Math.max(2.8, hits[0].distance - 0.7)));
+        desiredPos.y = Math.max(desiredPos.y, targetPos.y + 2.0);
       }
     }
 
-    camera.position.lerp(desired, 0.12);
-    camera.lookAt(
-      targetPos.x,
-      targetPos.y + (inCar ? 1.3 : 1.1),
-      targetPos.z
-    );
+    if (!smoothPos.current) {
+      smoothPos.current = desiredPos.clone();
+    } else {
+      smoothPos.current.lerp(desiredPos, Math.min(1, 8 * dt));
+    }
+
+    camera.position.copy(smoothPos.current);
+    camera.lookAt(targetPos.x, targetPos.y + lookHeight, targetPos.z);
+
+    // mantém sync para voltar ao modo free
+    if (cameraMode === "auto" && inCar) {
+      window.__camera.yaw = yaw.current;
+      window.__camera.pitch = pitch.current;
+    }
   });
 
   return null;
 }
 
-
 function Game({
   setMessage,
   carPath,
   setNearGarage,
-  garageOpen
+  garageOpen,
+  cameraMode
 }) {
   const playerRef = useRef();
   const carRef = useRef();
   const mapRef = useRef();
   const mapBounds = useRef(null);
+  const carVelocityRef = useRef(0);
 
   const [inCar, setInCar] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
@@ -598,12 +638,11 @@ function Game({
     if (garageOpen) return;
     setMessage(
       inCar
-        ? "DIRIGINDO  •  E = sair"
-        : "E = carro  |  G = garagem (totem ciano)"
+        ? "DIRIGINDO  •  E = sair  •  CAM troca 360/AUTO"
+        : "E = carro  |  G = garagem  |  CAM = câmera"
     );
   }, [inCar, setMessage, garageOpen]);
 
-  // E = só carro
   useEffect(() => {
     const tryCar = () => {
       if (window.__garageOpen) return;
@@ -673,13 +712,10 @@ function Game({
         mapBounds={mapBounds}
         mapRef={mapRef}
         carPath={carPath}
+        velocityRef={carVelocityRef}
       />
 
-      <Player
-        playerRef={playerRef}
-        inCar={inCar}
-        isMoving={isMoving}
-      />
+      <Player playerRef={playerRef} inCar={inCar} isMoving={isMoving} />
 
       <PlayerController
         playerRef={playerRef}
@@ -694,6 +730,8 @@ function Game({
         target={inCar ? carRef : playerRef}
         inCar={inCar}
         mapRef={mapRef}
+        cameraMode={cameraMode}
+        carVelocityRef={carVelocityRef}
       />
 
       <ambientLight intensity={1.15} />
@@ -710,10 +748,8 @@ function Game({
   );
 }
 
-
 function GarageMenu({ open, currentId, onSelect, onClose }) {
   if (!open) return null;
-
   return (
     <div className="garage-panel">
       <div className="garage-card">
@@ -835,6 +871,7 @@ function CameraTouch() {
       e.target.closest(".joystick") ||
       e.target.closest(".action-button") ||
       e.target.closest(".garage-button") ||
+      e.target.closest(".camera-mode-button") ||
       e.target.closest(".garage-panel")
     )
       return;
@@ -844,6 +881,9 @@ function CameraTouch() {
 
   function move(e) {
     if (!active.current) return;
+    // no modo AUTO o arraste não mexe a câmera
+    if (window.__cameraMode === "auto") return;
+
     const dx = e.clientX - last.current.x;
     const dy = e.clientY - last.current.y;
     last.current = { x: e.clientX, y: e.clientY };
@@ -870,24 +910,26 @@ function CameraTouch() {
   );
 }
 
-
 function App() {
   const [started, setStarted] = useState(false);
   const [message, setMessage] = useState("");
   const [nearGarage, setNearGarage] = useState(false);
   const [garageOpen, setGarageOpen] = useState(false);
   const [carId, setCarId] = useState("350z");
+  const [cameraMode, setCameraMode] = useState("free");
 
   const carPath =
     CAR_CATALOG.find((c) => c.id === carId)?.file || "/models/350z.glb";
 
   useEffect(() => {
-    window.__garageOpen = garageOpen;
+    window.__cameraMode = cameraMode;
+  }, [cameraMode]);
 
+  useEffect(() => {
+    window.__garageOpen = garageOpen;
     window.__openGarageIfNear = () => {
       if (nearGarage && !garageOpen) setGarageOpen(true);
     };
-
     return () => {
       delete window.__garageOpen;
       delete window.__openGarageIfNear;
@@ -907,14 +949,14 @@ function App() {
           <div className="menu-card">
             <div className="logo">MINI CITY</div>
             <div className="subtitle">OPEN WORLD 3D</div>
-            <p>E = carro · G = garagem</p>
+            <p>E = carro · G = garagem · CAM = 360° / AUTO</p>
             <button className="play-button" onClick={() => setStarted(true)}>
               JOGAR
             </button>
             <div className="controls-info">
               <span>🕹️ Analógico</span>
               <span>G Garagem</span>
-              <span>E Carro</span>
+              <span>CAM Câmera</span>
             </div>
           </div>
         </div>
@@ -934,6 +976,7 @@ function App() {
               carPath={carPath}
               setNearGarage={setNearGarage}
               garageOpen={garageOpen}
+              cameraMode={cameraMode}
             />
           </Canvas>
 
@@ -943,9 +986,19 @@ function App() {
             <div className="message">{message}</div>
           </div>
 
+          <button
+            className="camera-mode-button"
+            onClick={() =>
+              setCameraMode((m) => (m === "free" ? "auto" : "free"))
+            }
+          >
+            {cameraMode === "free" ? "CAM 360°" : "CAM AUTO"}
+          </button>
+
           <div
             className={
-              "garage-marker-label" + (nearGarage && !garageOpen ? " visible" : "")
+              "garage-marker-label" +
+              (nearGarage && !garageOpen ? " visible" : "")
             }
           >
             GARAGEM — aperte G
@@ -954,7 +1007,9 @@ function App() {
           <Joystick />
           <ActionButton />
           <GarageButton visible={nearGarage && !garageOpen} />
-          <div className="camera-help">Arraste para olhar</div>
+          <div className="camera-help">
+            {cameraMode === "free" ? "Arraste para olhar" : "Câmera automática"}
+          </div>
 
           <GarageMenu
             open={garageOpen}
