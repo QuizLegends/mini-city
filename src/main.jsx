@@ -1,8 +1,3 @@
-/**
- * main.jsx — Tokyo Night City
- * Mantém: carro 350Z, personagem, joystick, câmera, entrar/sair
- * Mapa: cidade procedural (src/city/)
- */
 import React, {
   useEffect,
   useRef,
@@ -19,6 +14,7 @@ import {
 } from "@react-three/fiber";
 
 import {
+  Sky,
   useGLTF,
   useAnimations
 } from "@react-three/drei";
@@ -28,12 +24,10 @@ import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.j
 
 import "./style.css";
 
-import City, { ROAD_CONFIG } from "./city/City.jsx";
-
 
 window.__keys = {};
 window.__joystick = { x: 0, y: 0 };
-window.__camera = { yaw: 0, pitch: 0.28 };
+window.__camera = { yaw: 0, pitch: 0.32 };
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -120,10 +114,62 @@ useGLTF.preload(CHAR_PATH);
 
 
 /* =========================================================
+   MAPA GLB
+========================================================= */
+
+function MapWorld({ mapRef, mapBounds }) {
+  const { scene } = useGLTF("/models/mapa.glb");
+
+  const model = useMemo(() => {
+    const clone = scene.clone(true);
+
+    const box = new THREE.Box3().setFromObject(clone);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+
+    const targetSize = 160;
+    const currentSize = Math.max(size.x, size.z);
+    const scale = currentSize > 0.01 ? targetSize / currentSize : 1;
+    clone.scale.setScalar(scale);
+
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    clone.position.sub(center.multiplyScalar(scale));
+
+    const box2 = new THREE.Box3().setFromObject(clone);
+    clone.position.y -= box2.min.y;
+
+    const finalBox = new THREE.Box3().setFromObject(clone);
+    if (mapBounds) {
+      mapBounds.current = {
+        minX: finalBox.min.x + 3,
+        maxX: finalBox.max.x - 3,
+        minZ: finalBox.min.z + 3,
+        maxZ: finalBox.max.z - 3
+      };
+    }
+
+    clone.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+
+    return clone;
+  }, [scene, mapBounds]);
+
+  return <primitive ref={mapRef} object={model} />;
+}
+
+useGLTF.preload("/models/mapa.glb");
+
+
+/* =========================================================
    CARRO 350Z
 ========================================================= */
 
-function Car({ carRef, playerRef, inCar, mapBounds, cityRef, obstacles }) {
+function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
   const { scene } = useGLTF("/models/350z.glb");
   const velocity = useRef(0);
   const steering = useRef(0);
@@ -131,6 +177,7 @@ function Car({ carRef, playerRef, inCar, mapBounds, cityRef, obstacles }) {
 
   const model = useMemo(() => {
     const c = scene.clone(true);
+
     const box = new THREE.Box3().setFromObject(c);
     const size = new THREE.Vector3();
     box.getSize(size);
@@ -146,7 +193,7 @@ function Car({ carRef, playerRef, inCar, mapBounds, cityRef, obstacles }) {
 
     const box2 = new THREE.Box3().setFromObject(c);
     c.position.y -= box2.min.y;
-    c.position.y += 0.12;
+    c.position.y += 0.18;
 
     const found = [];
     c.traverse((child) => {
@@ -178,17 +225,14 @@ function Car({ carRef, playerRef, inCar, mapBounds, cityRef, obstacles }) {
       const throttle = keys.w ? 1 : keys.s ? -1 : -joy.y;
       const turn = keys.a ? 1 : keys.d ? -1 : -joy.x;
 
-      velocity.current += throttle * 22 * delta;
-      velocity.current *= Math.pow(0.22, delta);
-      velocity.current = clamp(velocity.current, -12, 42);
+      velocity.current += throttle * 18 * delta;
+      velocity.current *= Math.pow(0.28, delta);
+      velocity.current = clamp(velocity.current, -9, 26);
 
-      steering.current = THREE.MathUtils.lerp(steering.current, turn, 8 * delta);
+      steering.current = THREE.MathUtils.lerp(steering.current, turn, 7 * delta);
 
       carRef.current.rotation.y +=
-        steering.current *
-        delta *
-        1.85 *
-        Math.min(1, Math.abs(velocity.current) / 5);
+        steering.current * delta * 1.6 * Math.min(1, Math.abs(velocity.current) / 4);
 
       const forward = new THREE.Vector3(0, 0, 1);
       forward.applyQuaternion(carRef.current.quaternion);
@@ -203,40 +247,33 @@ function Car({ carRef, playerRef, inCar, mapBounds, cityRef, obstacles }) {
         next.z = clamp(next.z, b.minZ, b.maxZ);
       }
 
-      // Colisão AABB com prédios
-      let blocked = false;
-      if (obstacles.current) {
-        const radius = 1.6;
-        for (const box of obstacles.current) {
-          if (
-            next.x > box.minX - radius &&
-            next.x < box.maxX + radius &&
-            next.z > box.minZ - radius &&
-            next.z < box.maxZ + radius
-          ) {
-            blocked = true;
-            break;
-          }
+      if (mapRef.current && Math.abs(velocity.current) > 0.3) {
+        const ray = new THREE.Raycaster();
+        const dir = forward.clone().normalize();
+        if (velocity.current < 0) dir.negate();
+        const origin = carRef.current.position.clone();
+        origin.y += 0.6;
+        ray.set(origin, dir);
+        ray.far = 2.5;
+        const hits = ray.intersectObject(mapRef.current, true);
+        if (hits.length === 0 || hits[0].distance > 1.8) {
+          carRef.current.position.copy(next);
+        } else {
+          velocity.current *= 0.3;
         }
-      }
-
-      if (!blocked) {
-        carRef.current.position.x = next.x;
-        carRef.current.position.z = next.z;
       } else {
-        velocity.current *= 0.25;
+        carRef.current.position.copy(next);
       }
 
-      // Chão / rampa (raycast)
-      if (cityRef.current) {
+      if (mapRef.current) {
         const downRay = new THREE.Raycaster();
         const origin = carRef.current.position.clone();
-        origin.y += 6;
+        origin.y += 3;
         downRay.set(origin, new THREE.Vector3(0, -1, 0));
-        downRay.far = 30;
-        const hits = downRay.intersectObject(cityRef.current, true);
+        downRay.far = 10;
+        const hits = downRay.intersectObject(mapRef.current, true);
         if (hits.length > 0) {
-          carRef.current.position.y = hits[0].point.y + 0.12;
+          carRef.current.position.y = hits[0].point.y + 0.15;
         }
       }
 
@@ -252,7 +289,7 @@ function Car({ carRef, playerRef, inCar, mapBounds, cityRef, obstacles }) {
   });
 
   return (
-    <group ref={carRef} position={[0, 0.2, ROAD_CONFIG.straightStartZ - 5]}>
+    <group ref={carRef} position={[4, 0.2, 4]}>
       <primitive object={model} />
     </group>
   );
@@ -262,15 +299,14 @@ useGLTF.preload("/models/350z.glb");
 
 
 /* =========================================================
-   CONTROLE A PÉ
+   CONTROLE DO PERSONAGEM
 ========================================================= */
 
 function PlayerController({
   playerRef,
   inCar,
   mapBounds,
-  cityRef,
-  obstacles,
+  mapRef,
   setIsMoving
 }) {
   const velocity = useRef(new THREE.Vector3());
@@ -315,28 +351,24 @@ function PlayerController({
       next.z = clamp(next.z, b.minZ, b.maxZ);
     }
 
-    let blocked = false;
-    if (obstacles.current && moving) {
-      const radius = 0.5;
-      for (const box of obstacles.current) {
-        if (
-          next.x > box.minX - radius &&
-          next.x < box.maxX + radius &&
-          next.z > box.minZ - radius &&
-          next.z < box.maxZ + radius
-        ) {
-          blocked = true;
-          break;
-        }
+    if (mapRef.current && moving) {
+      const ray = new THREE.Raycaster();
+      const dir = direction.clone().normalize();
+      const origin = playerRef.current.position.clone();
+      origin.y += 0.8;
+      ray.set(origin, dir);
+      ray.far = 1.0;
+      const hits = ray.intersectObject(mapRef.current, true);
+      if (hits.length === 0 || hits[0].distance > 0.55) {
+        playerRef.current.position.x = next.x;
+        playerRef.current.position.z = next.z;
       }
-    }
-
-    if (!blocked) {
+    } else if (moving) {
       playerRef.current.position.x = next.x;
       playerRef.current.position.z = next.z;
     }
 
-    if (cityRef.current) {
+    if (mapRef.current) {
       const downRay = new THREE.Raycaster();
       const origin = new THREE.Vector3(
         playerRef.current.position.x,
@@ -345,7 +377,7 @@ function PlayerController({
       );
       downRay.set(origin, new THREE.Vector3(0, -1, 0));
       downRay.far = 25;
-      const hits = downRay.intersectObject(cityRef.current, true);
+      const hits = downRay.intersectObject(mapRef.current, true);
       if (hits.length > 0) {
         playerRef.current.position.y = hits[0].point.y;
       }
@@ -364,47 +396,47 @@ function PlayerController({
    CÂMERA
 ========================================================= */
 
-function CameraController({ target, inCar, cityRef }) {
+function CameraController({ target, inCar, mapRef }) {
   const { camera } = useThree();
 
   useFrame(() => {
     if (!target.current) return;
 
     const targetPos = target.current.position;
-    const idealDistance = inCar ? 14 : 8.5;
+    const idealDistance = inCar ? 13 : 8.5;
     const yaw = window.__camera.yaw;
-    const pitch = clamp(window.__camera.pitch, 0.1, 0.72);
+    const pitch = clamp(window.__camera.pitch, 0.12, 0.75);
 
     const offset = new THREE.Vector3(
       Math.sin(yaw) * Math.cos(pitch) * idealDistance,
-      Math.sin(pitch) * idealDistance + (inCar ? 1.8 : 1.2),
+      Math.sin(pitch) * idealDistance + (inCar ? 1.5 : 1.2),
       Math.cos(yaw) * Math.cos(pitch) * idealDistance
     );
 
     let desired = targetPos.clone().add(offset);
-    desired.y = Math.max(desired.y, targetPos.y + 2.6);
+    desired.y = Math.max(desired.y, targetPos.y + 2.5);
 
-    if (cityRef.current) {
+    if (mapRef.current) {
       const ray = new THREE.Raycaster();
       const from = targetPos.clone();
-      from.y += 1.3;
+      from.y += 1.2;
       const dir = desired.clone().sub(from).normalize();
       const dist = from.distanceTo(desired);
       ray.set(from, dir);
       ray.far = dist;
-      const hits = ray.intersectObject(cityRef.current, true);
-      if (hits.length > 0 && hits[0].distance < dist - 0.5) {
+      const hits = ray.intersectObject(mapRef.current, true);
+      if (hits.length > 0 && hits[0].distance < dist - 0.4) {
         desired = from
           .clone()
-          .add(dir.multiplyScalar(Math.max(2.8, hits[0].distance - 0.7)));
-        desired.y = Math.max(desired.y, targetPos.y + 2.2);
+          .add(dir.multiplyScalar(Math.max(2.5, hits[0].distance - 0.6)));
+        desired.y = Math.max(desired.y, targetPos.y + 2.0);
       }
     }
 
-    camera.position.lerp(desired, 0.11);
+    camera.position.lerp(desired, 0.12);
     camera.lookAt(
       targetPos.x,
-      targetPos.y + (inCar ? 1.2 : 1.1),
+      targetPos.y + (inCar ? 1.3 : 1.1),
       targetPos.z
     );
   });
@@ -420,9 +452,8 @@ function CameraController({ target, inCar, cityRef }) {
 function Game({ setMessage }) {
   const playerRef = useRef();
   const carRef = useRef();
-  const cityRef = useRef();
+  const mapRef = useRef();
   const mapBounds = useRef(null);
-  const obstacles = useRef([]);
 
   const [inCar, setInCar] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
@@ -445,8 +476,8 @@ function Game({ setMessage }) {
   useEffect(() => {
     setMessage(
       inCar
-        ? "TÓQUIO  •  Reta → +Z  •  Espiral ~(55,-55)  •  E = sair"
-        : "Aproxime-se do 350Z e toque E"
+        ? "DIRIGINDO  •  Toque E para sair"
+        : "Aproxime-se do carro e toque E para entrar"
     );
   }, [inCar, setMessage]);
 
@@ -468,9 +499,9 @@ function Game({ setMessage }) {
         const distance = playerRef.current.position.distanceTo(
           carRef.current.position
         );
-        if (distance < 8) {
+        if (distance < 7) {
           setInCar(true);
-          setMessage("Dirigindo em Tóquio");
+          setMessage("Você entrou no carro");
         }
       }
     };
@@ -499,19 +530,14 @@ function Game({ setMessage }) {
 
   return (
     <>
-      <City
-        cityRef={cityRef}
-        obstacles={obstacles}
-        mapBounds={mapBounds}
-      />
+      <MapWorld mapRef={mapRef} mapBounds={mapBounds} />
 
       <Car
         carRef={carRef}
         playerRef={playerRef}
         inCar={inCar}
         mapBounds={mapBounds}
-        cityRef={cityRef}
-        obstacles={obstacles}
+        mapRef={mapRef}
       />
 
       <Player
@@ -524,16 +550,26 @@ function Game({ setMessage }) {
         playerRef={playerRef}
         inCar={inCar}
         mapBounds={mapBounds}
-        cityRef={cityRef}
-        obstacles={obstacles}
+        mapRef={mapRef}
         setIsMoving={setIsMoving}
       />
 
       <CameraController
         target={inCar ? carRef : playerRef}
         inCar={inCar}
-        cityRef={cityRef}
+        mapRef={mapRef}
       />
+
+      <ambientLight intensity={1.15} />
+      <directionalLight
+        position={[40, 55, 25]}
+        intensity={2.3}
+        castShadow
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
+      />
+      <hemisphereLight args={["#87ceeb", "#4a5a4a", 0.5]} />
+      <fog attach="fog" args={["#b0c4d0", 50, 140]} />
     </>
   );
 }
@@ -638,8 +674,8 @@ function CameraTouch() {
     window.__camera.yaw -= dx * 0.0055;
     window.__camera.pitch = clamp(
       window.__camera.pitch - dy * 0.0038,
-      0.1,
-      0.72
+      0.12,
+      0.75
     );
   }
 
@@ -668,18 +704,16 @@ function App() {
       {!started && (
         <div className="menu">
           <div className="menu-card">
-            <div className="logo">TOKYO NIGHT</div>
-            <div className="subtitle">STREET RACING</div>
-            <p>
-              Cidade noturna, grande reta e prédio em espiral. Drift e explore.
-            </p>
+            <div className="logo">MINI CITY</div>
+            <div className="subtitle">OPEN WORLD 3D</div>
+            <p>Explore o mapa, ande e dirija o 350Z.</p>
             <button className="play-button" onClick={() => setStarted(true)}>
               JOGAR
             </button>
             <div className="controls-info">
-              <span>🕹️ Dirigir</span>
-              <span>👆 Câmera</span>
-              <span>🌀 Espiral</span>
+              <span>🕹️ Analógico</span>
+              <span>👆 Câmera livre</span>
+              <span>🚗 Dirigir</span>
             </div>
           </div>
         </div>
@@ -690,16 +724,16 @@ function App() {
           <Canvas
             shadows
             dpr={[1, 1.5]}
-            camera={{ position: [0, 12, 30], fov: 55, near: 0.1, far: 400 }}
+            camera={{ position: [0, 10, 16], fov: 55, near: 0.1, far: 300 }}
             gl={{ antialias: true }}
           >
-            <color attach="background" args={["#06080e"]} />
+            <Sky sunPosition={[80, 30, 40]} />
             <Game setMessage={setMessage} />
           </Canvas>
 
           <CameraTouch />
           <div className="hud">
-            <div className="game-title">TOKYO NIGHT</div>
+            <div className="game-title">MINI CITY</div>
             <div className="message">{message}</div>
           </div>
           <Joystick />
