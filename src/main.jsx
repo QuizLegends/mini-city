@@ -33,21 +33,33 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-/** Normal da face em espaço mundial */
+/* =========================================================
+   LISTA DA GARAGEM
+========================================================= */
+
+const CAR_CATALOG = [
+  { id: "350z", name: "Nissan 350Z", file: "/models/350z.glb" },
+  { id: "evo-amarelo", name: "Evolution Amarelo", file: "/models/Evolution-amarelo.glb" },
+  { id: "evo-vermelho", name: "Evolution Vermelho", file: "/models/Evolution-vermelho.glb" },
+  { id: "eclipse-spyder", name: "Eclipse Spyder", file: "/models/Eclipse-spyder.glb" },
+  { id: "eclipse", name: "Eclipse", file: "/models/Eclipse.glb" },
+  { id: "rx7", name: "Mazda RX-7", file: "/models/RX7.glb" },
+  { id: "skyline", name: "Skyline", file: "/models/Skyline.glb" },
+  { id: "supra", name: "Supra", file: "/models/Supra.glb" }
+];
+
+// Posição da garagem no mapa (ajuste se quiser)
+const GARAGE_POS = new THREE.Vector3(12, 0, -8);
+const GARAGE_RADIUS = 8;
+
 function getWorldNormal(hit) {
   if (!hit.face || !hit.object) return new THREE.Vector3(0, 1, 0);
   const normalMatrix = new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld);
   return hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
 }
 
-/**
- * Movimento com colisão de parede + deslize (X e Z separados).
- * radius = “espessura” do corpo (carro ~1.8, personagem ~0.4)
- */
 function moveWithSlide(pos, delta, mapObject, radius) {
-  if (!mapObject) {
-    return pos.clone().add(delta);
-  }
+  if (!mapObject) return pos.clone().add(delta);
 
   const ray = new THREE.Raycaster();
   const result = pos.clone();
@@ -66,7 +78,6 @@ function moveWithSlide(pos, delta, mapObject, radius) {
     for (let i = 0; i < heights.length; i++) {
       const origin = result.clone();
       origin.y = pos.y + heights[i];
-      // começa um pouco à frente do centro
       origin[axis] += sign * 0.05;
 
       ray.set(origin, dir);
@@ -76,14 +87,12 @@ function moveWithSlide(pos, delta, mapObject, radius) {
       for (let h = 0; h < hits.length; h++) {
         const hit = hits[h];
         const n = getWorldNormal(hit);
-        // ignora chão / rampas suaves
         if (n.y > 0.55) continue;
         if (hit.distance < nearest) nearest = hit.distance;
       }
     }
 
     if (nearest < Infinity) {
-      // para antes da parede
       const allowed = Math.max(0, nearest - radius);
       result[axis] += sign * Math.min(Math.abs(amount), allowed);
     } else {
@@ -96,10 +105,6 @@ function moveWithSlide(pos, delta, mapObject, radius) {
   return result;
 }
 
-/**
- * Chão: só aceita superfícies “de piso”.
- * Não sobe para telhado (ignora hits muito acima do Y atual).
- */
 function stickToGround(pos, mapObject, yOffset) {
   if (!mapObject) return pos.y;
 
@@ -114,13 +119,9 @@ function stickToGround(pos, mapObject, yOffset) {
   for (let i = 0; i < hits.length; i++) {
     const hit = hits[i];
     const n = getWorldNormal(hit);
-    // precisa ser chão
     if (n.y < 0.5) continue;
-    // não teleporta para cima de prédio
     if (hit.point.y > pos.y + 0.85) continue;
-    // não cai para um buraco absurdo num frame
     if (hit.point.y < pos.y - 3.5) continue;
-
     if (!best || hit.distance < best.distance) best = hit;
   }
 
@@ -207,7 +208,7 @@ useGLTF.preload(CHAR_PATH);
 
 
 /* =========================================================
-   MAPA GLB
+   MAPA
 ========================================================= */
 
 function MapWorld({ mapRef, mapBounds }) {
@@ -259,14 +260,42 @@ useGLTF.preload("/models/mapa.glb");
 
 
 /* =========================================================
-   CARRO 350Z
+   MARCADOR DA GARAGEM (bloco + luz)
 ========================================================= */
 
-function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
-  const { scene } = useGLTF("/models/350z.glb");
-  const velocity = useRef(0);
-  const steering = useRef(0);
-  const wheels = useRef([]);
+function GarageMarker() {
+  return (
+    <group position={[GARAGE_POS.x, 0, GARAGE_POS.z]}>
+      {/* piso */}
+      <mesh position={[0, 0.05, 0]} receiveShadow>
+        <boxGeometry args={[10, 0.1, 10]} />
+        <meshStandardMaterial color="#1a3040" emissive="#0a2030" emissiveIntensity={0.4} />
+      </mesh>
+      {/* totem */}
+      <mesh position={[0, 1.5, -4]} castShadow>
+        <boxGeometry args={[1.2, 3, 0.4]} />
+        <meshStandardMaterial color="#223" metalness={0.4} roughness={0.5} />
+      </mesh>
+      <mesh position={[0, 2.6, -3.7]}>
+        <boxGeometry args={[1.4, 0.7, 0.15]} />
+        <meshStandardMaterial
+          color="#00e5ff"
+          emissive="#00e5ff"
+          emissiveIntensity={1.2}
+        />
+      </mesh>
+      <pointLight position={[0, 3, -3]} intensity={0.8} distance={14} color="#00e5ff" />
+    </group>
+  );
+}
+
+
+/* =========================================================
+   CARRO (modelo trocável)
+========================================================= */
+
+function CarModel({ path }) {
+  const { scene } = useGLTF(path);
 
   const model = useMemo(() => {
     const c = scene.clone(true);
@@ -275,8 +304,8 @@ function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
     box.getSize(size);
 
     const targetLength = 5.2;
-    const currentLength = Math.max(size.x, size.z);
-    const scale = currentLength > 0.01 ? targetLength / currentLength : 1.8;
+    const currentLength = Math.max(size.x, size.z, 0.01);
+    const scale = targetLength / currentLength;
     c.scale.setScalar(scale);
 
     const center = new THREE.Vector3();
@@ -287,25 +316,32 @@ function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
     c.position.y -= box2.min.y;
     c.position.y += 0.15;
 
-    const found = [];
     c.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true;
         child.receiveShadow = true;
-        const name = (child.name || "").toLowerCase();
-        if (
-          name.includes("wheel") ||
-          name.includes("tire") ||
-          name.includes("tyre") ||
-          name.includes("rim")
-        ) {
-          found.push(child);
-        }
       }
     });
-    wheels.current = found;
+
     return c;
   }, [scene]);
+
+  return <primitive object={model} />;
+}
+
+// preload todos
+CAR_CATALOG.forEach((c) => useGLTF.preload(c.file));
+
+function Car({
+  carRef,
+  playerRef,
+  inCar,
+  mapBounds,
+  mapRef,
+  carPath
+}) {
+  const velocity = useRef(0);
+  const steering = useRef(0);
 
   useFrame((_, delta) => {
     if (!carRef.current) return;
@@ -330,14 +366,11 @@ function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
       forward.applyQuaternion(carRef.current.quaternion);
       const deltaMove = forward.multiplyScalar(velocity.current * delta);
 
-      // raio do carro (meia largura + margem) — maior = para mais longe da parede
-      const carRadius = 2.5;
-
       let next = moveWithSlide(
         carRef.current.position,
         deltaMove,
         mapRef.current,
-        carRadius
+        2.0
       );
 
       if (mapBounds.current) {
@@ -358,21 +391,14 @@ function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
         playerRef.current.position.copy(carRef.current.position);
       }
     }
-
-    const spin = velocity.current * delta * 2.2;
-    wheels.current.forEach((w) => {
-      if (w) w.rotation.x += spin;
-    });
   });
 
   return (
     <group ref={carRef} position={[0, 0.2, 0]}>
-      <primitive object={model} />
+      <CarModel key={carPath} path={carPath} />
     </group>
   );
 }
-
-useGLTF.preload("/models/350z.glb");
 
 
 /* =========================================================
@@ -384,7 +410,8 @@ function PlayerController({
   inCar,
   mapBounds,
   mapRef,
-  setIsMoving
+  setIsMoving,
+  setNearGarage
 }) {
   const velocity = useRef(new THREE.Vector3());
 
@@ -440,6 +467,10 @@ function PlayerController({
       mapRef.current,
       0
     );
+
+    // perto da garagem?
+    const distGarage = playerRef.current.position.distanceTo(GARAGE_POS);
+    setNearGarage(distGarage < GARAGE_RADIUS);
 
     if (moving) {
       playerRef.current.rotation.y = Math.atan2(direction.x, direction.z);
@@ -507,7 +538,12 @@ function CameraController({ target, inCar, mapRef }) {
    GAME
 ========================================================= */
 
-function Game({ setMessage }) {
+function Game({
+  setMessage,
+  carPath,
+  setNearGarage,
+  garageOpen
+}) {
   const playerRef = useRef();
   const carRef = useRef();
   const mapRef = useRef();
@@ -532,15 +568,19 @@ function Game({ setMessage }) {
   }, []);
 
   useEffect(() => {
+    if (garageOpen) return;
     setMessage(
       inCar
-        ? "DIRIGINDO  •  Toque E para sair"
-        : "Aproxime-se do carro e toque E para entrar"
+        ? "DIRIGINDO  •  E = sair"
+        : "E = entrar no carro  |  Garagem: totem ciano"
     );
-  }, [inCar, setMessage]);
+  }, [inCar, setMessage, garageOpen]);
 
   useEffect(() => {
-    const tryToggleCar = () => {
+    const tryToggle = () => {
+      // Se a App abriu a garagem, não entra no carro neste frame
+      if (window.__garageOpen) return;
+
       if (!carRef.current) return;
 
       if (inCar) {
@@ -552,8 +592,20 @@ function Game({ setMessage }) {
           playerRef.current.position.copy(exitPos);
         }
         setMessage("Você saiu do carro");
-      } else {
-        if (!playerRef.current) return;
+        return;
+      }
+
+      // Perto da garagem → abre menu (tratado na App)
+      if (playerRef.current) {
+        const dG = playerRef.current.position.distanceTo(GARAGE_POS);
+        if (dG < GARAGE_RADIUS) {
+          if (window.__openGarage) window.__openGarage();
+          return;
+        }
+      }
+
+      // Perto do carro → entrar
+      if (playerRef.current) {
         const distance = playerRef.current.position.distanceTo(
           carRef.current.position
         );
@@ -564,12 +616,12 @@ function Game({ setMessage }) {
       }
     };
 
-    window.__toggleCar = tryToggleCar;
+    window.__toggleCar = tryToggle;
 
     const onKeyDown = (e) => {
       if (e.key.toLowerCase() === "e" && !window.__ePressed) {
         window.__ePressed = true;
-        tryToggleCar();
+        tryToggle();
       }
     };
     const onKeyUp = (e) => {
@@ -586,9 +638,15 @@ function Game({ setMessage }) {
     };
   }, [inCar, setMessage]);
 
+  // Ao trocar de carro, se estava dirigindo, continua no mesmo lugar
+  useEffect(() => {
+    // força re-mount visual only
+  }, [carPath]);
+
   return (
     <>
       <MapWorld mapRef={mapRef} mapBounds={mapBounds} />
+      <GarageMarker />
 
       <Car
         carRef={carRef}
@@ -596,6 +654,7 @@ function Game({ setMessage }) {
         inCar={inCar}
         mapBounds={mapBounds}
         mapRef={mapRef}
+        carPath={carPath}
       />
 
       <Player
@@ -610,6 +669,7 @@ function Game({ setMessage }) {
         mapBounds={mapBounds}
         mapRef={mapRef}
         setIsMoving={setIsMoving}
+        setNearGarage={setNearGarage}
       />
 
       <CameraController
@@ -634,7 +694,41 @@ function Game({ setMessage }) {
 
 
 /* =========================================================
-   UI
+   UI GARAGEM
+========================================================= */
+
+function GarageMenu({ open, currentId, onSelect, onClose }) {
+  if (!open) return null;
+
+  return (
+    <div className="garage-panel">
+      <div className="garage-card">
+        <h2>GARAGEM</h2>
+        <p>Escolha o carro</p>
+        <div className="garage-list">
+          {CAR_CATALOG.map((car) => (
+            <button
+              key={car.id}
+              className={
+                "garage-item" + (car.id === currentId ? " selected" : "")
+              }
+              onClick={() => onSelect(car)}
+            >
+              {car.name}
+            </button>
+          ))}
+        </div>
+        <button className="garage-close" onClick={onClose}>
+          Fechar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+/* =========================================================
+   UI CONTROLES
 ========================================================= */
 
 function Joystick() {
@@ -717,7 +811,8 @@ function CameraTouch() {
   function start(e) {
     if (
       e.target.closest(".joystick") ||
-      e.target.closest(".action-button")
+      e.target.closest(".action-button") ||
+      e.target.closest(".garage-panel")
     )
       return;
     active.current = true;
@@ -753,9 +848,34 @@ function CameraTouch() {
 }
 
 
+/* =========================================================
+   APP
+========================================================= */
+
 function App() {
   const [started, setStarted] = useState(false);
   const [message, setMessage] = useState("");
+  const [nearGarage, setNearGarage] = useState(false);
+  const [garageOpen, setGarageOpen] = useState(false);
+  const [carId, setCarId] = useState("350z");
+
+  const carPath =
+    CAR_CATALOG.find((c) => c.id === carId)?.file || "/models/350z.glb";
+
+  useEffect(() => {
+    window.__garageOpen = garageOpen;
+    window.__openGarage = () => setGarageOpen(true);
+    return () => {
+      delete window.__garageOpen;
+      delete window.__openGarage;
+    };
+  }, [garageOpen]);
+
+  function selectCar(car) {
+    setCarId(car.id);
+    setGarageOpen(false);
+    setMessage("Carro selecionado: " + car.name);
+  }
 
   return (
     <div className="app">
@@ -764,14 +884,14 @@ function App() {
           <div className="menu-card">
             <div className="logo">MINI CITY</div>
             <div className="subtitle">OPEN WORLD 3D</div>
-            <p>Explore o mapa, ande e dirija o 350Z.</p>
+            <p>Explore, dirija e troque de carro na garagem.</p>
             <button className="play-button" onClick={() => setStarted(true)}>
               JOGAR
             </button>
             <div className="controls-info">
               <span>🕹️ Analógico</span>
-              <span>👆 Câmera livre</span>
-              <span>🚗 Dirigir</span>
+              <span>🚗 Garagem</span>
+              <span>👆 Câmera</span>
             </div>
           </div>
         </div>
@@ -786,7 +906,12 @@ function App() {
             gl={{ antialias: true }}
           >
             <Sky sunPosition={[80, 30, 40]} />
-            <Game setMessage={setMessage} />
+            <Game
+              setMessage={setMessage}
+              carPath={carPath}
+              setNearGarage={setNearGarage}
+              garageOpen={garageOpen}
+            />
           </Canvas>
 
           <CameraTouch />
@@ -794,9 +919,25 @@ function App() {
             <div className="game-title">MINI CITY</div>
             <div className="message">{message}</div>
           </div>
+
+          <div
+            className={
+              "garage-marker-label" + (nearGarage && !garageOpen ? " visible" : "")
+            }
+          >
+            GARAGEM — aperte E
+          </div>
+
           <Joystick />
           <ActionButton />
           <div className="camera-help">Arraste para olhar</div>
+
+          <GarageMenu
+            open={garageOpen}
+            currentId={carId}
+            onSelect={selectCar}
+            onClose={() => setGarageOpen(false)}
+          />
         </>
       )}
     </div>
