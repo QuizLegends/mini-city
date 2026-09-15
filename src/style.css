@@ -565,3 +565,92 @@ canvas {
   }
 
 }
+/* ===== GARAGEM ===== */
+.garage-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.72);
+  pointer-events: auto;
+}
+
+.garage-card {
+  width: min(92vw, 420px);
+  max-height: 80vh;
+  overflow: auto;
+  padding: 22px 18px 18px;
+  border-radius: 16px;
+  background: rgba(12, 16, 20, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff;
+  text-align: center;
+}
+
+.garage-card h2 {
+  margin: 0 0 6px;
+  font-size: 22px;
+  letter-spacing: 3px;
+}
+
+.garage-card p {
+  margin: 0 0 16px;
+  opacity: 0.55;
+  font-size: 13px;
+}
+
+.garage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.garage-item {
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.garage-item:active,
+.garage-item.selected {
+  background: rgba(0, 180, 255, 0.25);
+  border-color: rgba(0, 200, 255, 0.5);
+}
+
+.garage-close {
+  margin-top: 14px;
+  padding: 10px 18px;
+  border-radius: 10px;
+  border: none;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.garage-marker-label {
+  position: absolute;
+  left: 50%;
+  top: 18%;
+  transform: translateX(-50%);
+  z-index: 40;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #7df;
+  font-size: 12px;
+  letter-spacing: 2px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.garage-marker-label.visible {
+  opacity: 1;
+}
