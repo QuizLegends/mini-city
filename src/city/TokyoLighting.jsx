@@ -3,12 +3,16 @@ import React from "react";
 export function TokyoLighting() {
   return (
     <>
-      <ambientLight intensity={0.25} color="#1a2030" />
-      <hemisphereLight args={["#1b2838", "#0a0a12", 0.35]} />
+      {/* Mais claro para enxergar */}
+      <ambientLight intensity={0.85} color="#c8d4e8" />
+
+      <hemisphereLight args={["#6a8aad", "#1a1520", 0.7]} />
+
+      {/* Luz principal */}
       <directionalLight
-        position={[30, 80, 20]}
-        intensity={0.35}
-        color="#a8c0d8"
+        position={[40, 90, 30]}
+        intensity={1.1}
+        color="#e8f0ff"
         castShadow
         shadow-mapSize-width={1024}
         shadow-mapSize-height={1024}
@@ -18,11 +22,23 @@ export function TokyoLighting() {
         shadow-camera-top={120}
         shadow-camera-bottom={-120}
       />
-      <pointLight position={[0, 25, 0]} intensity={0.6} distance={180} color="#4060a0" />
-      <pointLight position={[0, 18, 180]} intensity={0.8} distance={120} color="#ff2d6a" />
-      <pointLight position={[55, 30, -55]} intensity={0.7} distance={80} color="#00e5ff" />
-      <pointLight position={[-40, 15, 80]} intensity={0.5} distance={90} color="#b14eff" />
-      <fog attach="fog" args={["#080a10", 40, 220]} />
+
+      {/* Segunda luz (preenche sombra) */}
+      <directionalLight
+        position={[-30, 40, -20]}
+        intensity={0.35}
+        color="#a0b8d0"
+      />
+
+      {/* Glow urbano */}
+      <pointLight position={[0, 30, 0]} intensity={1.2} distance={200} color="#6090c0" />
+      <pointLight position={[0, 20, 180]} intensity={1.0} distance={140} color="#ff6b9d" />
+      <pointLight position={[55, 35, -55]} intensity={0.9} distance={100} color="#40f0ff" />
+      <pointLight position={[-40, 18, 80]} intensity={0.7} distance={100} color="#c070ff" />
+      <pointLight position={[60, 15, 40]} intensity={0.5} distance={80} color="#ffd080" />
+
+      {/* Névoa mais suave e clara */}
+      <fog attach="fog" args={["#1a2230", 60, 280]} />
     </>
   );
 }
