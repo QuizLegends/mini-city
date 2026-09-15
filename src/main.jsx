@@ -27,7 +27,7 @@ import "./style.css";
 window.__keys = {};
 window.__joystick = { x: 0, y: 0 };
 window.__camera = { yaw: 0, pitch: 0.32 };
-window.__cameraMode = "free";
+window.__cameraDrag = null;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -447,14 +447,14 @@ function PlayerController({
     const keys = window.__keys || {};
     const joy = window.__joystick || { x: 0, y: 0 };
 
-    const yaw = window.__camera.yaw;
+    const camYaw = window.__camera.yaw;
     const inputX = (keys.d ? 1 : 0) - (keys.a ? 1 : 0) + joy.x;
     const inputZ = (keys.s ? 1 : 0) - (keys.w ? 1 : 0) + joy.y;
 
     const direction = new THREE.Vector3(
-      inputX * Math.cos(yaw) + inputZ * Math.sin(yaw),
+      inputX * Math.cos(camYaw) + inputZ * Math.sin(camYaw),
       0,
-      -inputX * Math.sin(yaw) + inputZ * Math.cos(yaw)
+      -inputX * Math.sin(camYaw) + inputZ * Math.cos(camYaw)
     );
 
     if (direction.lengthSq() > 1) direction.normalize();
@@ -502,21 +502,19 @@ function PlayerController({
   return null;
 }
 
-/* =========================================================
-   CÂMERA: free (360°) | auto (frente/ré suave)
-========================================================= */
-
-function CameraController({
-  target,
-  inCar,
-  mapRef,
-  cameraMode,
-  carVelocityRef
-}) {
+/**
+ * Câmera sincronizada:
+ * - No carro: AUTO (frente/ré) + arraste temporário que volta sozinho
+ * - A pé: 360° livre
+ * Sem botão de troca
+ */
+function CameraController({ target, inCar, mapRef, carVelocityRef }) {
   const { camera } = useThree();
   const yaw = useRef(window.__camera.yaw);
   const pitch = useRef(0.28);
   const smoothPos = useRef(null);
+  const manualYaw = useRef(0);
+  const manualPitch = useRef(0);
 
   useFrame((_, delta) => {
     if (!target.current) return;
@@ -524,13 +522,13 @@ function CameraController({
     const targetPos = target.current.position;
     const dt = Math.min(delta, 0.05);
 
-    let desiredYaw;
-    let desiredPitch;
+    let baseYaw;
+    let basePitch;
     let desiredDist;
     let lookHeight;
     let turnSpeed;
 
-    if (cameraMode === "auto" && inCar) {
+    if (inCar) {
       const forward = new THREE.Vector3(0, 0, 1);
       forward.applyQuaternion(target.current.quaternion);
 
@@ -538,19 +536,37 @@ function CameraController({
       const reversing = speed < -1.0;
       const travel = reversing ? forward.clone().negate() : forward;
 
-      // atrás em relação ao movimento → mostra o caminho
-      desiredYaw = Math.atan2(travel.x, travel.z) + Math.PI;
-      desiredPitch = 0.3;
+      baseYaw = Math.atan2(travel.x, travel.z) + Math.PI;
+      basePitch = 0.3;
       desiredDist = 13;
       lookHeight = 1.15;
       turnSpeed = 5.5;
+
+      if (window.__cameraDrag) {
+        manualYaw.current += window.__cameraDrag.dx;
+        manualPitch.current += window.__cameraDrag.dy;
+        window.__cameraDrag = null;
+      }
+
+      manualYaw.current = clamp(manualYaw.current, -1.1, 1.1);
+      manualPitch.current = clamp(manualPitch.current, -0.25, 0.35);
+
+      const returnSpeed = 1.8;
+      manualYaw.current += (0 - manualYaw.current) * Math.min(1, returnSpeed * dt);
+      manualPitch.current += (0 - manualPitch.current) * Math.min(1, returnSpeed * dt);
     } else {
-      desiredYaw = window.__camera.yaw;
-      desiredPitch = clamp(window.__camera.pitch, 0.12, 0.75);
-      desiredDist = inCar ? 13 : 8.5;
-      lookHeight = inCar ? 1.25 : 1.1;
+      baseYaw = window.__camera.yaw;
+      basePitch = clamp(window.__camera.pitch, 0.12, 0.75);
+      desiredDist = 8.5;
+      lookHeight = 1.1;
       turnSpeed = 12;
+      manualYaw.current = 0;
+      manualPitch.current = 0;
+      window.__cameraDrag = null;
     }
+
+    const desiredYaw = baseYaw + (inCar ? manualYaw.current : 0);
+    const desiredPitch = basePitch + (inCar ? manualPitch.current : 0);
 
     let dy = desiredYaw - yaw.current;
     while (dy > Math.PI) dy -= Math.PI * 2;
@@ -593,8 +609,7 @@ function CameraController({
     camera.position.copy(smoothPos.current);
     camera.lookAt(targetPos.x, targetPos.y + lookHeight, targetPos.z);
 
-    // mantém sync para voltar ao modo free
-    if (cameraMode === "auto" && inCar) {
+    if (inCar) {
       window.__camera.yaw = yaw.current;
       window.__camera.pitch = pitch.current;
     }
@@ -603,13 +618,7 @@ function CameraController({
   return null;
 }
 
-function Game({
-  setMessage,
-  carPath,
-  setNearGarage,
-  garageOpen,
-  cameraMode
-}) {
+function Game({ setMessage, carPath, setNearGarage, garageOpen }) {
   const playerRef = useRef();
   const carRef = useRef();
   const mapRef = useRef();
@@ -638,8 +647,8 @@ function Game({
     if (garageOpen) return;
     setMessage(
       inCar
-        ? "DIRIGINDO  •  E = sair  •  CAM troca 360/AUTO"
-        : "E = carro  |  G = garagem  |  CAM = câmera"
+        ? "DIRIGINDO  •  E = sair  •  câmera segue o caminho"
+        : "E = carro  |  G = garagem"
     );
   }, [inCar, setMessage, garageOpen]);
 
@@ -730,7 +739,6 @@ function Game({
         target={inCar ? carRef : playerRef}
         inCar={inCar}
         mapRef={mapRef}
-        cameraMode={cameraMode}
         carVelocityRef={carVelocityRef}
       />
 
@@ -871,7 +879,6 @@ function CameraTouch() {
       e.target.closest(".joystick") ||
       e.target.closest(".action-button") ||
       e.target.closest(".garage-button") ||
-      e.target.closest(".camera-mode-button") ||
       e.target.closest(".garage-panel")
     )
       return;
@@ -881,12 +888,17 @@ function CameraTouch() {
 
   function move(e) {
     if (!active.current) return;
-    // no modo AUTO o arraste não mexe a câmera
-    if (window.__cameraMode === "auto") return;
 
     const dx = e.clientX - last.current.x;
     const dy = e.clientY - last.current.y;
     last.current = { x: e.clientX, y: e.clientY };
+
+    // offset temporário no carro + livre a pé
+    window.__cameraDrag = {
+      dx: -dx * 0.0055,
+      dy: -dy * 0.0038
+    };
+
     window.__camera.yaw -= dx * 0.0055;
     window.__camera.pitch = clamp(
       window.__camera.pitch - dy * 0.0038,
@@ -916,14 +928,9 @@ function App() {
   const [nearGarage, setNearGarage] = useState(false);
   const [garageOpen, setGarageOpen] = useState(false);
   const [carId, setCarId] = useState("350z");
-  const [cameraMode, setCameraMode] = useState("free");
 
   const carPath =
     CAR_CATALOG.find((c) => c.id === carId)?.file || "/models/350z.glb";
-
-  useEffect(() => {
-    window.__cameraMode = cameraMode;
-  }, [cameraMode]);
 
   useEffect(() => {
     window.__garageOpen = garageOpen;
@@ -949,14 +956,14 @@ function App() {
           <div className="menu-card">
             <div className="logo">MINI CITY</div>
             <div className="subtitle">OPEN WORLD 3D</div>
-            <p>E = carro · G = garagem · CAM = 360° / AUTO</p>
+            <p>E = carro · G = garagem · câmera segue o movimento</p>
             <button className="play-button" onClick={() => setStarted(true)}>
               JOGAR
             </button>
             <div className="controls-info">
               <span>🕹️ Analógico</span>
               <span>G Garagem</span>
-              <span>CAM Câmera</span>
+              <span>E Carro</span>
             </div>
           </div>
         </div>
@@ -976,7 +983,6 @@ function App() {
               carPath={carPath}
               setNearGarage={setNearGarage}
               garageOpen={garageOpen}
-              cameraMode={cameraMode}
             />
           </Canvas>
 
@@ -985,15 +991,6 @@ function App() {
             <div className="game-title">MINI CITY</div>
             <div className="message">{message}</div>
           </div>
-
-          <button
-            className="camera-mode-button"
-            onClick={() =>
-              setCameraMode((m) => (m === "free" ? "auto" : "free"))
-            }
-          >
-            {cameraMode === "free" ? "CAM 360°" : "CAM AUTO"}
-          </button>
 
           <div
             className={
@@ -1008,7 +1005,7 @@ function App() {
           <ActionButton />
           <GarageButton visible={nearGarage && !garageOpen} />
           <div className="camera-help">
-            {cameraMode === "free" ? "Arraste para olhar" : "Câmera automática"}
+            No carro a câmera segue o caminho · arraste olha e volta
           </div>
 
           <GarageMenu
