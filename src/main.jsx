@@ -27,7 +27,6 @@ import "./style.css";
 window.__keys = {};
 window.__joystick = { x: 0, y: 0 };
 window.__camera = { yaw: 0, pitch: 0.32 };
-window.__cameraDrag = null;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -503,76 +502,78 @@ function PlayerController({
 }
 
 /**
- * Câmera sincronizada:
- * - No carro: AUTO (frente/ré) + arraste temporário que volta sozinho
- * - A pé: 360° livre
- * Sem botão de troca
+ * Câmera:
+ * - 360° livre e PERMANECE onde você olhou (lateral, etc.)
+ * - Só quando o carro se move (frente/ré) volta para a câmera do caminho
  */
 function CameraController({ target, inCar, mapRef, carVelocityRef }) {
   const { camera } = useThree();
   const yaw = useRef(window.__camera.yaw);
   const pitch = useRef(0.28);
   const smoothPos = useRef(null);
-  const manualYaw = useRef(0);
-  const manualPitch = useRef(0);
+
+  // true = usuário está no modo livre (não força caminho)
+  // false = seguir direção do movimento
+  const followPath = useRef(true);
+  const wasMoving = useRef(false);
 
   useFrame((_, delta) => {
     if (!target.current) return;
 
     const targetPos = target.current.position;
     const dt = Math.min(delta, 0.05);
+    const speed = carVelocityRef?.current ?? 0;
+    const moving = Math.abs(speed) > 1.0;
 
-    let baseYaw;
-    let basePitch;
+    // Acabou de começar a andar → reativa câmera do caminho
+    if (inCar && moving && !wasMoving.current) {
+      followPath.current = true;
+    }
+    wasMoving.current = inCar && moving;
+
+    // Se arrastou a tela, entra em 360° livre e FICA
+    if (window.__cameraLooked) {
+      followPath.current = false;
+      window.__cameraLooked = false;
+    }
+
+    let desiredYaw;
+    let desiredPitch;
     let desiredDist;
     let lookHeight;
     let turnSpeed;
 
-    if (inCar) {
+    if (inCar && followPath.current) {
+      // Câmera do caminho (só com movimento ou até o usuário olhar)
       const forward = new THREE.Vector3(0, 0, 1);
       forward.applyQuaternion(target.current.quaternion);
 
-      const speed = carVelocityRef?.current ?? 0;
       const reversing = speed < -1.0;
       const travel = reversing ? forward.clone().negate() : forward;
 
-      baseYaw = Math.atan2(travel.x, travel.z) + Math.PI;
-      basePitch = 0.3;
+      desiredYaw = Math.atan2(travel.x, travel.z) + Math.PI;
+      desiredPitch = 0.3;
       desiredDist = 13;
       lookHeight = 1.15;
-      turnSpeed = 5.5;
+      turnSpeed = moving ? 5.5 : 3.5;
 
-      if (window.__cameraDrag) {
-        manualYaw.current += window.__cameraDrag.dx;
-        manualPitch.current += window.__cameraDrag.dy;
-        window.__cameraDrag = null;
-      }
-
-      manualYaw.current = clamp(manualYaw.current, -1.1, 1.1);
-      manualPitch.current = clamp(manualPitch.current, -0.25, 0.35);
-
-      const returnSpeed = 1.8;
-      manualYaw.current += (0 - manualYaw.current) * Math.min(1, returnSpeed * dt);
-      manualPitch.current += (0 - manualPitch.current) * Math.min(1, returnSpeed * dt);
+      // sincroniza __camera para o livre continuar de onde parou
+      window.__camera.yaw = yaw.current;
+      window.__camera.pitch = pitch.current;
     } else {
-      baseYaw = window.__camera.yaw;
-      basePitch = clamp(window.__camera.pitch, 0.12, 0.75);
-      desiredDist = 8.5;
-      lookHeight = 1.1;
-      turnSpeed = 12;
-      manualYaw.current = 0;
-      manualPitch.current = 0;
-      window.__cameraDrag = null;
+      // 360° livre — usa exatamente o que o toque definiu
+      desiredYaw = window.__camera.yaw;
+      desiredPitch = clamp(window.__camera.pitch, 0.12, 0.75);
+      desiredDist = inCar ? 13 : 8.5;
+      lookHeight = inCar ? 1.2 : 1.1;
+      turnSpeed = 14;
     }
-
-    const desiredYaw = baseYaw + (inCar ? manualYaw.current : 0);
-    const desiredPitch = basePitch + (inCar ? manualPitch.current : 0);
 
     let dy = desiredYaw - yaw.current;
     while (dy > Math.PI) dy -= Math.PI * 2;
     while (dy < -Math.PI) dy += Math.PI * 2;
     yaw.current += dy * Math.min(1, turnSpeed * dt);
-    pitch.current += (desiredPitch - pitch.current) * Math.min(1, 6 * dt);
+    pitch.current += (desiredPitch - pitch.current) * Math.min(1, 8 * dt);
 
     const offset = new THREE.Vector3(
       Math.sin(yaw.current) * Math.cos(pitch.current) * desiredDist,
@@ -603,16 +604,11 @@ function CameraController({ target, inCar, mapRef, carVelocityRef }) {
     if (!smoothPos.current) {
       smoothPos.current = desiredPos.clone();
     } else {
-      smoothPos.current.lerp(desiredPos, Math.min(1, 8 * dt));
+      smoothPos.current.lerp(desiredPos, Math.min(1, 9 * dt));
     }
 
     camera.position.copy(smoothPos.current);
     camera.lookAt(targetPos.x, targetPos.y + lookHeight, targetPos.z);
-
-    if (inCar) {
-      window.__camera.yaw = yaw.current;
-      window.__camera.pitch = pitch.current;
-    }
   });
 
   return null;
@@ -647,7 +643,7 @@ function Game({ setMessage, carPath, setNearGarage, garageOpen }) {
     if (garageOpen) return;
     setMessage(
       inCar
-        ? "DIRIGINDO  •  E = sair  •  câmera segue o caminho"
+        ? "E = sair  •  Arraste = 360°  •  Andar = câmera do caminho"
         : "E = carro  |  G = garagem"
     );
   }, [inCar, setMessage, garageOpen]);
@@ -893,11 +889,10 @@ function CameraTouch() {
     const dy = e.clientY - last.current.y;
     last.current = { x: e.clientX, y: e.clientY };
 
-    // offset temporário no carro + livre a pé
-    window.__cameraDrag = {
-      dx: -dx * 0.0055,
-      dy: -dy * 0.0038
-    };
+    // marca que o jogador quer 360° livre (não puxar de volta)
+    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+      window.__cameraLooked = true;
+    }
 
     window.__camera.yaw -= dx * 0.0055;
     window.__camera.pitch = clamp(
@@ -956,7 +951,7 @@ function App() {
           <div className="menu-card">
             <div className="logo">MINI CITY</div>
             <div className="subtitle">OPEN WORLD 3D</div>
-            <p>E = carro · G = garagem · câmera segue o movimento</p>
+            <p>Arraste = 360° · Andar com o carro = câmera do caminho</p>
             <button className="play-button" onClick={() => setStarted(true)}>
               JOGAR
             </button>
@@ -1005,7 +1000,7 @@ function App() {
           <ActionButton />
           <GarageButton visible={nearGarage && !garageOpen} />
           <div className="camera-help">
-            No carro a câmera segue o caminho · arraste olha e volta
+            Arraste: 360° fixo · Acelerar/ré: câmera do caminho
           </div>
 
           <GarageMenu
