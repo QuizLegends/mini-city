@@ -33,10 +33,6 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-/* =========================================================
-   GARAGEM + CARROS
-========================================================= */
-
 const CAR_CATALOG = [
   { id: "350z", name: "Nissan 350Z", file: "/models/350z.glb" },
   { id: "evo-amarelo", name: "Evolution Amarelo", file: "/models/Evolution-amarelo.glb" },
@@ -48,7 +44,6 @@ const CAR_CATALOG = [
   { id: "supra", name: "Supra", file: "/models/Supra.glb" }
 ];
 
-// Bem perto do spawn (0,0,0) — fácil de achar
 const GARAGE_POS = new THREE.Vector3(0, 0, 18);
 const GARAGE_RADIUS = 12;
 
@@ -130,10 +125,6 @@ function stickToGround(pos, mapObject, yOffset) {
 }
 
 
-/* =========================================================
-   PERSONAGEM
-========================================================= */
-
 const CHAR_PATH = "/models/personagem.glb";
 
 function Player({ playerRef, inCar, isMoving }) {
@@ -207,10 +198,6 @@ function Player({ playerRef, inCar, isMoving }) {
 useGLTF.preload(CHAR_PATH);
 
 
-/* =========================================================
-   MAPA
-========================================================= */
-
 function MapWorld({ mapRef, mapBounds }) {
   const { scene } = useGLTF("/models/mapa.glb");
 
@@ -259,14 +246,9 @@ function MapWorld({ mapRef, mapBounds }) {
 useGLTF.preload("/models/mapa.glb");
 
 
-/* =========================================================
-   MARCADOR GARAGEM (bem visível)
-========================================================= */
-
 function GarageMarker() {
   return (
     <group position={[GARAGE_POS.x, 0, GARAGE_POS.z]}>
-      {/* piso grande */}
       <mesh position={[0, 0.08, 0]} receiveShadow>
         <boxGeometry args={[14, 0.16, 14]} />
         <meshStandardMaterial
@@ -276,7 +258,6 @@ function GarageMarker() {
         />
       </mesh>
 
-      {/* pilares */}
       {[-5, 5].map((x) =>
         [-5, 5].map((z) => (
           <mesh key={x + "-" + z} position={[x, 2, z]} castShadow>
@@ -286,13 +267,11 @@ function GarageMarker() {
         ))
       )}
 
-      {/* totem central alto */}
       <mesh position={[0, 4, 0]} castShadow>
         <boxGeometry args={[1.6, 8, 1.6]} />
         <meshStandardMaterial color="#102028" metalness={0.5} roughness={0.4} />
       </mesh>
 
-      {/* placa GARAGEM */}
       <mesh position={[0, 7.2, 0.9]}>
         <boxGeometry args={[3.2, 1.2, 0.2]} />
         <meshStandardMaterial
@@ -302,7 +281,6 @@ function GarageMarker() {
         />
       </mesh>
 
-      {/* anel no chão */}
       <mesh position={[0, 0.12, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[4, 5.5, 32]} />
         <meshStandardMaterial
@@ -314,15 +292,34 @@ function GarageMarker() {
       </mesh>
 
       <pointLight position={[0, 6, 0]} intensity={1.4} distance={22} color="#00e5ff" />
-      <pointLight position={[0, 2, 0]} intensity={0.8} distance={16} color="#80f0ff" />
     </group>
   );
 }
 
 
-/* =========================================================
-   MODELO DO CARRO + RODAS
-========================================================= */
+/** Só meshes com nome de roda — NÃO usa fallback (evita sombra girando) */
+function findWheelMeshes(root) {
+  const found = [];
+  const skip = /shadow|plane|ground|decal|glass|window|body|chassis|interior/i;
+
+  root.traverse((child) => {
+    if (!child.isMesh) return;
+    const name = (child.name || "").toLowerCase();
+    if (skip.test(name)) return;
+    if (
+      name.includes("wheel") ||
+      name.includes("tire") ||
+      name.includes("tyre") ||
+      name.includes("rim") ||
+      name.includes("roda") ||
+      name.includes("pneu")
+    ) {
+      found.push(child);
+    }
+  });
+
+  return found;
+}
 
 function CarModel({ path, wheelsRef }) {
   const { scene } = useGLTF(path);
@@ -346,40 +343,16 @@ function CarModel({ path, wheelsRef }) {
     c.position.y -= box2.min.y;
     c.position.y += 0.15;
 
-    const found = [];
     c.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true;
         child.receiveShadow = true;
-        const name = (child.name || "").toLowerCase();
-        if (
-          name.includes("wheel") ||
-          name.includes("tire") ||
-          name.includes("tyre") ||
-          name.includes("rim") ||
-          name.includes("roda") ||
-          name.includes("pneu")
-        ) {
-          found.push(child);
-        }
       }
     });
 
-    // fallback: 4 meshes mais baixos
-    if (found.length === 0) {
-      const list = [];
-      c.traverse((child) => {
-        if (child.isMesh) {
-          const p = new THREE.Vector3();
-          child.getWorldPosition(p);
-          list.push({ mesh: child, y: p.y });
-        }
-      });
-      list.sort((a, b) => a.y - b.y);
-      list.slice(0, 4).forEach((item) => found.push(item.mesh));
+    if (wheelsRef) {
+      wheelsRef.current = findWheelMeshes(c);
     }
-
-    if (wheelsRef) wheelsRef.current = found;
 
     return c;
   }, [scene, path, wheelsRef]);
@@ -454,7 +427,6 @@ function Car({
       }
     }
 
-    // Giro das rodas
     const spin = velocity.current * delta * 2.4;
     const wheels = wheelsRef.current || [];
     for (let i = 0; i < wheels.length; i++) {
@@ -469,10 +441,6 @@ function Car({
   );
 }
 
-
-/* =========================================================
-   CONTROLE A PÉ
-========================================================= */
 
 function PlayerController({
   playerRef,
@@ -550,10 +518,6 @@ function PlayerController({
 }
 
 
-/* =========================================================
-   CÂMERA
-========================================================= */
-
 function CameraController({ target, inCar, mapRef }) {
   const { camera } = useThree();
 
@@ -603,10 +567,6 @@ function CameraController({ target, inCar, mapRef }) {
 }
 
 
-/* =========================================================
-   GAME
-========================================================= */
-
 function Game({
   setMessage,
   carPath,
@@ -641,12 +601,13 @@ function Game({
     setMessage(
       inCar
         ? "DIRIGINDO  •  E = sair"
-        : "E = carro  |  Totem CIANO = GARAGEM (em frente no +Z)"
+        : "E = carro  |  G = garagem (totem ciano)"
     );
   }, [inCar, setMessage, garageOpen]);
 
+  // E = só carro
   useEffect(() => {
-    const tryToggle = () => {
+    const tryCar = () => {
       if (window.__garageOpen) return;
       if (!carRef.current) return;
 
@@ -663,12 +624,6 @@ function Game({
       }
 
       if (playerRef.current) {
-        const dG = playerRef.current.position.distanceTo(GARAGE_POS);
-        if (dG < GARAGE_RADIUS) {
-          if (window.__openGarage) window.__openGarage();
-          return;
-        }
-
         const distance = playerRef.current.position.distanceTo(
           carRef.current.position
         );
@@ -679,16 +634,23 @@ function Game({
       }
     };
 
-    window.__toggleCar = tryToggle;
+    window.__toggleCar = tryCar;
 
     const onKeyDown = (e) => {
-      if (e.key.toLowerCase() === "e" && !window.__ePressed) {
+      const k = e.key.toLowerCase();
+      if (k === "e" && !window.__ePressed) {
         window.__ePressed = true;
-        tryToggle();
+        tryCar();
+      }
+      if (k === "g" && !window.__gPressed) {
+        window.__gPressed = true;
+        if (window.__openGarageIfNear) window.__openGarageIfNear();
       }
     };
     const onKeyUp = (e) => {
-      if (e.key.toLowerCase() === "e") window.__ePressed = false;
+      const k = e.key.toLowerCase();
+      if (k === "e") window.__ePressed = false;
+      if (k === "g") window.__gPressed = false;
     };
 
     window.addEventListener("keydown", onKeyDown);
@@ -750,10 +712,6 @@ function Game({
   );
 }
 
-
-/* =========================================================
-   UI
-========================================================= */
 
 function GarageMenu({ open, currentId, onSelect, onClose }) {
   if (!open) return null;
@@ -857,6 +815,19 @@ function ActionButton() {
   );
 }
 
+function GarageButton({ visible }) {
+  return (
+    <button
+      className={"garage-button" + (visible ? " visible" : "")}
+      onPointerDown={() => {
+        if (window.__openGarageIfNear) window.__openGarageIfNear();
+      }}
+    >
+      G
+    </button>
+  );
+}
+
 function CameraTouch() {
   const active = useRef(false);
   const last = useRef({ x: 0, y: 0 });
@@ -865,6 +836,7 @@ function CameraTouch() {
     if (
       e.target.closest(".joystick") ||
       e.target.closest(".action-button") ||
+      e.target.closest(".garage-button") ||
       e.target.closest(".garage-panel")
     )
       return;
@@ -913,12 +885,16 @@ function App() {
 
   useEffect(() => {
     window.__garageOpen = garageOpen;
-    window.__openGarage = () => setGarageOpen(true);
+
+    window.__openGarageIfNear = () => {
+      if (nearGarage && !garageOpen) setGarageOpen(true);
+    };
+
     return () => {
       delete window.__garageOpen;
-      delete window.__openGarage;
+      delete window.__openGarageIfNear;
     };
-  }, [garageOpen]);
+  }, [garageOpen, nearGarage]);
 
   function selectCar(car) {
     setCarId(car.id);
@@ -933,14 +909,14 @@ function App() {
           <div className="menu-card">
             <div className="logo">MINI CITY</div>
             <div className="subtitle">OPEN WORLD 3D</div>
-            <p>Explore, dirija e troque de carro na garagem.</p>
+            <p>E = carro · G = garagem</p>
             <button className="play-button" onClick={() => setStarted(true)}>
               JOGAR
             </button>
             <div className="controls-info">
               <span>🕹️ Analógico</span>
-              <span>🚗 Garagem</span>
-              <span>👆 Câmera</span>
+              <span>G Garagem</span>
+              <span>E Carro</span>
             </div>
           </div>
         </div>
@@ -974,11 +950,12 @@ function App() {
               "garage-marker-label" + (nearGarage && !garageOpen ? " visible" : "")
             }
           >
-            GARAGEM — aperte E
+            GARAGEM — aperte G
           </div>
 
           <Joystick />
           <ActionButton />
+          <GarageButton visible={nearGarage && !garageOpen} />
           <div className="camera-help">Arraste para olhar</div>
 
           <GarageMenu
