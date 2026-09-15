@@ -33,13 +33,82 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+/**
+ * Colisão com deslize: testa X e Z separados.
+ * Retorna a posição final sem “grudar” na parede.
+ */
+function moveWithSlide(from, deltaXZ, mapObject, height, radius, rayFar) {
+  if (!mapObject) {
+    return from.clone().add(deltaXZ);
+  }
+
+  const ray = new THREE.Raycaster();
+  const down = new THREE.Vector3(0, -1, 0);
+
+  function blocked(origin, dir, far) {
+    ray.set(origin, dir);
+    ray.far = far;
+    const hits = ray.intersectObject(mapObject, true);
+    if (!hits.length) return false;
+    // ignora chão (normal quase vertical para cima)
+    for (const h of hits) {
+      if (h.distance < far && h.face) {
+        const n = h.face.normal.clone();
+        // normal em espaço world aproximado: se for parede, |y| baixo
+        if (Math.abs(n.y) < 0.55 && h.distance < far) return true;
+      } else if (h.distance < far * 0.85) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  const tryPos = from.clone();
+  const stepX = new THREE.Vector3(deltaXZ.x, 0, 0);
+  const stepZ = new THREE.Vector3(0, 0, deltaXZ.z);
+
+  // eixo X
+  if (Math.abs(deltaXZ.x) > 0.0001) {
+    const dir = new THREE.Vector3(Math.sign(deltaXZ.x), 0, 0);
+    const origin = tryPos.clone();
+    origin.y = height;
+    origin.x += dir.x * 0.15;
+    if (!blocked(origin, dir, radius + Math.abs(deltaXZ.x))) {
+      tryPos.x += deltaXZ.x;
+    }
+  }
+
+  // eixo Z
+  if (Math.abs(deltaXZ.z) > 0.0001) {
+    const dir = new THREE.Vector3(0, 0, Math.sign(deltaXZ.z));
+    const origin = tryPos.clone();
+    origin.y = height;
+    origin.z += dir.z * 0.15;
+    if (!blocked(origin, dir, radius + Math.abs(deltaXZ.z))) {
+      tryPos.z += deltaXZ.z;
+    }
+  }
+
+  return tryPos;
+}
+
+function stickToGround(pos, mapObject, probeHeight = 8, far = 20, offset = 0) {
+  if (!mapObject) return pos.y;
+  const ray = new THREE.Raycaster();
+  const origin = new THREE.Vector3(pos.x, pos.y + probeHeight, pos.z);
+  ray.set(origin, new THREE.Vector3(0, -1, 0));
+  ray.far = far;
+  const hits = ray.intersectObject(mapObject, true);
+  if (hits.length > 0) return hits[0].point.y + offset;
+  return pos.y;
+}
+
 
 /* =========================================================
    PERSONAGEM
 ========================================================= */
 
 const CHAR_PATH = "/models/personagem.glb";
-// const CHAR_PATH = "/models/scifi_girl_v.01.glb";
 
 function Player({ playerRef, inCar, isMoving }) {
   const { scene, animations } = useGLTF(CHAR_PATH);
@@ -86,7 +155,6 @@ function Player({ playerRef, inCar, isMoving }) {
       if (act) {
         act.reset().fadeIn(0.12).play();
         act.setLoop(THREE.LoopRepeat, Infinity);
-        act.timeScale = 1.0;
       }
     } else if (idleName && actions[idleName]) {
       actions[idleName].reset().fadeIn(0.12).play();
@@ -127,6 +195,7 @@ function MapWorld({ mapRef, mapBounds }) {
     const size = new THREE.Vector3();
     box.getSize(size);
 
+    // ~160 m de lado (ajuste se quiser maior/menor)
     const targetSize = 160;
     const currentSize = Math.max(size.x, size.z);
     const scale = currentSize > 0.01 ? targetSize / currentSize : 1;
@@ -142,10 +211,10 @@ function MapWorld({ mapRef, mapBounds }) {
     const finalBox = new THREE.Box3().setFromObject(clone);
     if (mapBounds) {
       mapBounds.current = {
-        minX: finalBox.min.x + 3,
-        maxX: finalBox.max.x - 3,
-        minZ: finalBox.min.z + 3,
-        maxZ: finalBox.max.z - 3
+        minX: finalBox.min.x + 2,
+        maxX: finalBox.max.x - 2,
+        minZ: finalBox.min.z + 2,
+        maxZ: finalBox.max.z - 2
       };
     }
 
@@ -177,7 +246,6 @@ function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
 
   const model = useMemo(() => {
     const c = scene.clone(true);
-
     const box = new THREE.Box3().setFromObject(c);
     const size = new THREE.Vector3();
     box.getSize(size);
@@ -237,9 +305,16 @@ function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
       const forward = new THREE.Vector3(0, 0, 1);
       forward.applyQuaternion(carRef.current.quaternion);
 
-      const next = carRef.current.position
-        .clone()
-        .addScaledVector(forward, velocity.current * delta);
+      const deltaMove = forward.multiplyScalar(velocity.current * delta);
+
+      let next = moveWithSlide(
+        carRef.current.position,
+        deltaMove,
+        mapRef.current,
+        carRef.current.position.y + 0.7,
+        1.4,
+        1.6
+      );
 
       if (mapBounds.current) {
         const b = mapBounds.current;
@@ -247,35 +322,15 @@ function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
         next.z = clamp(next.z, b.minZ, b.maxZ);
       }
 
-      if (mapRef.current && Math.abs(velocity.current) > 0.3) {
-        const ray = new THREE.Raycaster();
-        const dir = forward.clone().normalize();
-        if (velocity.current < 0) dir.negate();
-        const origin = carRef.current.position.clone();
-        origin.y += 0.6;
-        ray.set(origin, dir);
-        ray.far = 2.5;
-        const hits = ray.intersectObject(mapRef.current, true);
-        if (hits.length === 0 || hits[0].distance > 1.8) {
-          carRef.current.position.copy(next);
-        } else {
-          velocity.current *= 0.3;
-        }
-      } else {
-        carRef.current.position.copy(next);
-      }
-
-      if (mapRef.current) {
-        const downRay = new THREE.Raycaster();
-        const origin = carRef.current.position.clone();
-        origin.y += 3;
-        downRay.set(origin, new THREE.Vector3(0, -1, 0));
-        downRay.far = 10;
-        const hits = downRay.intersectObject(mapRef.current, true);
-        if (hits.length > 0) {
-          carRef.current.position.y = hits[0].point.y + 0.15;
-        }
-      }
+      carRef.current.position.x = next.x;
+      carRef.current.position.z = next.z;
+      carRef.current.position.y = stickToGround(
+        carRef.current.position,
+        mapRef.current,
+        5,
+        15,
+        0.15
+      );
 
       if (playerRef.current) {
         playerRef.current.position.copy(carRef.current.position);
@@ -289,7 +344,7 @@ function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
   });
 
   return (
-    <group ref={carRef} position={[4, 0.2, 4]}>
+    <group ref={carRef} position={[0, 0.2, 0]}>
       <primitive object={model} />
     </group>
   );
@@ -299,7 +354,7 @@ useGLTF.preload("/models/350z.glb");
 
 
 /* =========================================================
-   CONTROLE DO PERSONAGEM
+   CONTROLE A PÉ
 ========================================================= */
 
 function PlayerController({
@@ -337,13 +392,20 @@ function PlayerController({
 
     const speed = 6.0;
     velocity.current.lerp(
-      direction.multiplyScalar(speed),
+      direction.clone().multiplyScalar(speed),
       1 - Math.pow(0.0008, delta)
     );
 
-    const next = playerRef.current.position
-      .clone()
-      .addScaledVector(velocity.current, delta);
+    const deltaMove = velocity.current.clone().multiplyScalar(delta);
+
+    let next = moveWithSlide(
+      playerRef.current.position,
+      deltaMove,
+      mapRef.current,
+      playerRef.current.position.y + 0.9,
+      0.45,
+      0.55
+    );
 
     if (mapBounds.current) {
       const b = mapBounds.current;
@@ -351,37 +413,15 @@ function PlayerController({
       next.z = clamp(next.z, b.minZ, b.maxZ);
     }
 
-    if (mapRef.current && moving) {
-      const ray = new THREE.Raycaster();
-      const dir = direction.clone().normalize();
-      const origin = playerRef.current.position.clone();
-      origin.y += 0.8;
-      ray.set(origin, dir);
-      ray.far = 1.0;
-      const hits = ray.intersectObject(mapRef.current, true);
-      if (hits.length === 0 || hits[0].distance > 0.55) {
-        playerRef.current.position.x = next.x;
-        playerRef.current.position.z = next.z;
-      }
-    } else if (moving) {
-      playerRef.current.position.x = next.x;
-      playerRef.current.position.z = next.z;
-    }
-
-    if (mapRef.current) {
-      const downRay = new THREE.Raycaster();
-      const origin = new THREE.Vector3(
-        playerRef.current.position.x,
-        playerRef.current.position.y + 8,
-        playerRef.current.position.z
-      );
-      downRay.set(origin, new THREE.Vector3(0, -1, 0));
-      downRay.far = 25;
-      const hits = downRay.intersectObject(mapRef.current, true);
-      if (hits.length > 0) {
-        playerRef.current.position.y = hits[0].point.y;
-      }
-    }
+    playerRef.current.position.x = next.x;
+    playerRef.current.position.z = next.z;
+    playerRef.current.position.y = stickToGround(
+      playerRef.current.position,
+      mapRef.current,
+      8,
+      25,
+      0
+    );
 
     if (moving) {
       playerRef.current.rotation.y = Math.atan2(direction.x, direction.z);
