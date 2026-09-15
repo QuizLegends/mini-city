@@ -37,7 +37,6 @@ const CAR_CATALOG = [
   { id: "350z", name: "Nissan 350Z", file: "/models/350z.glb" },
   { id: "evo-amarelo", name: "Evolution Amarelo", file: "/models/Evolution-amarelo.glb" },
   { id: "evo-vermelho", name: "Evolution Vermelho", file: "/models/Evolution-vermelho.glb" },
-  { id: "eclipse-spyder", name: "Eclipse Spyder", file: "/models/Eclipse-spyder.glb" },
   { id: "eclipse", name: "Eclipse", file: "/models/Eclipse.glb" },
   { id: "rx7", name: "Mazda RX-7", file: "/models/RX7.glb" },
   { id: "skyline", name: "Skyline", file: "/models/Skyline.glb" },
