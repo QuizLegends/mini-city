@@ -33,73 +33,98 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-/**
- * Colisão com deslize: testa X e Z separados.
- * Retorna a posição final sem “grudar” na parede.
- */
-function moveWithSlide(from, deltaXZ, mapObject, height, radius, rayFar) {
-  if (!mapObject) {
-    return from.clone().add(deltaXZ);
-  }
-
-  const ray = new THREE.Raycaster();
-  const down = new THREE.Vector3(0, -1, 0);
-
-  function blocked(origin, dir, far) {
-    ray.set(origin, dir);
-    ray.far = far;
-    const hits = ray.intersectObject(mapObject, true);
-    if (!hits.length) return false;
-    // ignora chão (normal quase vertical para cima)
-    for (const h of hits) {
-      if (h.distance < far && h.face) {
-        const n = h.face.normal.clone();
-        // normal em espaço world aproximado: se for parede, |y| baixo
-        if (Math.abs(n.y) < 0.55 && h.distance < far) return true;
-      } else if (h.distance < far * 0.85) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  const tryPos = from.clone();
-  const stepX = new THREE.Vector3(deltaXZ.x, 0, 0);
-  const stepZ = new THREE.Vector3(0, 0, deltaXZ.z);
-
-  // eixo X
-  if (Math.abs(deltaXZ.x) > 0.0001) {
-    const dir = new THREE.Vector3(Math.sign(deltaXZ.x), 0, 0);
-    const origin = tryPos.clone();
-    origin.y = height;
-    origin.x += dir.x * 0.15;
-    if (!blocked(origin, dir, radius + Math.abs(deltaXZ.x))) {
-      tryPos.x += deltaXZ.x;
-    }
-  }
-
-  // eixo Z
-  if (Math.abs(deltaXZ.z) > 0.0001) {
-    const dir = new THREE.Vector3(0, 0, Math.sign(deltaXZ.z));
-    const origin = tryPos.clone();
-    origin.y = height;
-    origin.z += dir.z * 0.15;
-    if (!blocked(origin, dir, radius + Math.abs(deltaXZ.z))) {
-      tryPos.z += deltaXZ.z;
-    }
-  }
-
-  return tryPos;
+/** Normal da face em espaço mundial */
+function getWorldNormal(hit) {
+  if (!hit.face || !hit.object) return new THREE.Vector3(0, 1, 0);
+  const normalMatrix = new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld);
+  return hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
 }
 
-function stickToGround(pos, mapObject, probeHeight = 8, far = 20, offset = 0) {
-  if (!mapObject) return pos.y;
+/**
+ * Movimento com colisão de parede + deslize (X e Z separados).
+ * radius = “espessura” do corpo (carro ~1.8, personagem ~0.4)
+ */
+function moveWithSlide(pos, delta, mapObject, radius) {
+  if (!mapObject) {
+    return pos.clone().add(delta);
+  }
+
   const ray = new THREE.Raycaster();
-  const origin = new THREE.Vector3(pos.x, pos.y + probeHeight, pos.z);
+  const result = pos.clone();
+  const heights = [0.35, 0.75, 1.15];
+
+  function moveAxis(axis) {
+    const amount = delta[axis];
+    if (Math.abs(amount) < 1e-6) return;
+
+    const sign = Math.sign(amount);
+    const dir = new THREE.Vector3(0, 0, 0);
+    dir[axis] = sign;
+
+    let nearest = Infinity;
+
+    for (let i = 0; i < heights.length; i++) {
+      const origin = result.clone();
+      origin.y = pos.y + heights[i];
+      // começa um pouco à frente do centro
+      origin[axis] += sign * 0.05;
+
+      ray.set(origin, dir);
+      ray.far = radius + Math.abs(amount) + 0.35;
+
+      const hits = ray.intersectObject(mapObject, true);
+      for (let h = 0; h < hits.length; h++) {
+        const hit = hits[h];
+        const n = getWorldNormal(hit);
+        // ignora chão / rampas suaves
+        if (n.y > 0.55) continue;
+        if (hit.distance < nearest) nearest = hit.distance;
+      }
+    }
+
+    if (nearest < Infinity) {
+      // para antes da parede
+      const allowed = Math.max(0, nearest - radius);
+      result[axis] += sign * Math.min(Math.abs(amount), allowed);
+    } else {
+      result[axis] += amount;
+    }
+  }
+
+  moveAxis("x");
+  moveAxis("z");
+  return result;
+}
+
+/**
+ * Chão: só aceita superfícies “de piso”.
+ * Não sobe para telhado (ignora hits muito acima do Y atual).
+ */
+function stickToGround(pos, mapObject, yOffset) {
+  if (!mapObject) return pos.y;
+
+  const ray = new THREE.Raycaster();
+  const origin = new THREE.Vector3(pos.x, pos.y + 2.5, pos.z);
   ray.set(origin, new THREE.Vector3(0, -1, 0));
-  ray.far = far;
+  ray.far = 6;
+
   const hits = ray.intersectObject(mapObject, true);
-  if (hits.length > 0) return hits[0].point.y + offset;
+  let best = null;
+
+  for (let i = 0; i < hits.length; i++) {
+    const hit = hits[i];
+    const n = getWorldNormal(hit);
+    // precisa ser chão
+    if (n.y < 0.5) continue;
+    // não teleporta para cima de prédio
+    if (hit.point.y > pos.y + 0.85) continue;
+    // não cai para um buraco absurdo num frame
+    if (hit.point.y < pos.y - 3.5) continue;
+
+    if (!best || hit.distance < best.distance) best = hit;
+  }
+
+  if (best) return best.point.y + yOffset;
   return pos.y;
 }
 
@@ -195,7 +220,6 @@ function MapWorld({ mapRef, mapBounds }) {
     const size = new THREE.Vector3();
     box.getSize(size);
 
-    // ~160 m de lado (ajuste se quiser maior/menor)
     const targetSize = 160;
     const currentSize = Math.max(size.x, size.z);
     const scale = currentSize > 0.01 ? targetSize / currentSize : 1;
@@ -261,7 +285,7 @@ function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
 
     const box2 = new THREE.Box3().setFromObject(c);
     c.position.y -= box2.min.y;
-    c.position.y += 0.18;
+    c.position.y += 0.15;
 
     const found = [];
     c.traverse((child) => {
@@ -304,16 +328,16 @@ function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
 
       const forward = new THREE.Vector3(0, 0, 1);
       forward.applyQuaternion(carRef.current.quaternion);
-
       const deltaMove = forward.multiplyScalar(velocity.current * delta);
+
+      // raio do carro (meia largura + margem) — maior = para mais longe da parede
+      const carRadius = 2.0;
 
       let next = moveWithSlide(
         carRef.current.position,
         deltaMove,
         mapRef.current,
-        carRef.current.position.y + 0.7,
-        1.4,
-        1.6
+        carRadius
       );
 
       if (mapBounds.current) {
@@ -327,9 +351,7 @@ function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
       carRef.current.position.y = stickToGround(
         carRef.current.position,
         mapRef.current,
-        5,
-        15,
-        0.15
+        0.12
       );
 
       if (playerRef.current) {
@@ -402,9 +424,7 @@ function PlayerController({
       playerRef.current.position,
       deltaMove,
       mapRef.current,
-      playerRef.current.position.y + 0.9,
-      0.45,
-      0.55
+      0.45
     );
 
     if (mapBounds.current) {
@@ -418,8 +438,6 @@ function PlayerController({
     playerRef.current.position.y = stickToGround(
       playerRef.current.position,
       mapRef.current,
-      8,
-      25,
       0
     );
 
