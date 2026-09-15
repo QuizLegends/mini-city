@@ -654,3 +654,41 @@ canvas {
 .garage-marker-label.visible {
   opacity: 1;
 }
+/* Botão G da garagem */
+.garage-button {
+  position: absolute;
+  z-index: 40;
+  right: 35px;
+  bottom: 160px;
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 229, 255, 0.5);
+  background: radial-gradient(circle, #2ec8e0, #0a5a6a);
+  color: white;
+  font-size: 28px;
+  font-weight: 900;
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.5);
+  touch-action: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.garage-button.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.garage-button:active {
+  transform: scale(0.9);
+}
+
+@media (max-width: 500px) {
+  .garage-button {
+    width: 68px;
+    height: 68px;
+    right: 25px;
+    bottom: 140px;
+  }
+}
