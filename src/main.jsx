@@ -331,7 +331,7 @@ function Car({ carRef, playerRef, inCar, mapBounds, mapRef }) {
       const deltaMove = forward.multiplyScalar(velocity.current * delta);
 
       // raio do carro (meia largura + margem) — maior = para mais longe da parede
-      const carRadius = 2.0;
+      const carRadius = 2.5;
 
       let next = moveWithSlide(
         carRef.current.position,
