@@ -27,10 +27,17 @@ import "./style.css";
 window.__keys = {};
 window.__joystick = { x: 0, y: 0 };
 window.__camera = { yaw: 0, pitch: 0.32 };
+window.__cameraLooked = false;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
+
+/* =========================================================
+   MAPA LOCAL
+========================================================= */
+
+const MAP_URL = "/models/mapa.glb";
 
 const CAR_CATALOG = [
   { id: "350z", name: "Nissan 350Z", file: "/models/350z.glb" },
@@ -41,6 +48,7 @@ const CAR_CATALOG = [
   { id: "supra", name: "Supra", file: "/models/Supra.glb" }
 ];
 
+// Garagem: XZ no mapa — Y é ajustado no chão
 const GARAGE_POS = new THREE.Vector3(0, 0, 18);
 const GARAGE_RADIUS = 12;
 
@@ -48,6 +56,26 @@ function getWorldNormal(hit) {
   if (!hit.face || !hit.object) return new THREE.Vector3(0, 1, 0);
   const normalMatrix = new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld);
   return hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
+}
+
+/** Raycast para achar altura do chão */
+function sampleGroundY(mapObject, x, z, fromY = 80, far = 120) {
+  if (!mapObject) return 0;
+  const ray = new THREE.Raycaster();
+  ray.set(new THREE.Vector3(x, fromY, z), new THREE.Vector3(0, -1, 0));
+  ray.far = far;
+  const hits = ray.intersectObject(mapObject, true);
+  if (!hits.length) return 0;
+
+  // pega o hit mais alto que seja “chão” (normal pra cima)
+  let best = null;
+  for (let i = 0; i < hits.length; i++) {
+    const hit = hits[i];
+    const n = getWorldNormal(hit);
+    if (n.y < 0.35) continue;
+    if (!best || hit.point.y > best.point.y) best = hit;
+  }
+  return best ? best.point.y : hits[0].point.y;
 }
 
 function moveWithSlide(pos, delta, mapObject, radius) {
@@ -101,9 +129,10 @@ function stickToGround(pos, mapObject, yOffset) {
   if (!mapObject) return pos.y;
 
   const ray = new THREE.Raycaster();
-  const origin = new THREE.Vector3(pos.x, pos.y + 2.5, pos.z);
+  // começa bem acima para não nascer embaixo do mapa
+  const origin = new THREE.Vector3(pos.x, pos.y + 40, pos.z);
   ray.set(origin, new THREE.Vector3(0, -1, 0));
-  ray.far = 6;
+  ray.far = 80;
 
   const hits = ray.intersectObject(mapObject, true);
   let best = null;
@@ -111,13 +140,12 @@ function stickToGround(pos, mapObject, yOffset) {
   for (let i = 0; i < hits.length; i++) {
     const hit = hits[i];
     const n = getWorldNormal(hit);
-    if (n.y < 0.5) continue;
-    if (hit.point.y > pos.y + 0.85) continue;
-    if (hit.point.y < pos.y - 3.5) continue;
-    if (!best || hit.distance < best.distance) best = hit;
+    if (n.y < 0.35) continue;
+    if (!best || hit.point.y > best.point.y) best = hit;
   }
 
   if (best) return best.point.y + yOffset;
+  if (hits.length) return hits[0].point.y + yOffset;
   return pos.y;
 }
 
@@ -182,7 +210,7 @@ function Player({ playerRef, inCar, isMoving }) {
     <group
       ref={playerRef}
       scale={[charScale, charScale, charScale]}
-      position={[0, 0, 0]}
+      position={[0, 5, 0]}
       visible={!inCar}
       dispose={null}
     >
@@ -193,26 +221,33 @@ function Player({ playerRef, inCar, isMoving }) {
 
 useGLTF.preload(CHAR_PATH);
 
-function MapWorld({ mapRef, mapBounds }) {
-  const { scene } = useGLTF("/models/mapa.glb");
+function MapWorld({ mapRef, mapBounds, onMapReady }) {
+  const { scene } = useGLTF(MAP_URL);
 
   const model = useMemo(() => {
     const clone = scene.clone(true);
+
+    // Garante matriz atualizada
+    clone.updateMatrixWorld(true);
+
     const box = new THREE.Box3().setFromObject(clone);
     const size = new THREE.Vector3();
     box.getSize(size);
 
     const targetSize = 160;
-    const currentSize = Math.max(size.x, size.z);
-    const scale = currentSize > 0.01 ? targetSize / currentSize : 1;
+    const currentSize = Math.max(size.x, size.z, 0.01);
+    const scale = targetSize / currentSize;
     clone.scale.setScalar(scale);
+    clone.updateMatrixWorld(true);
 
-    const center = new THREE.Vector3();
-    box.getCenter(center);
-    clone.position.sub(center.multiplyScalar(scale));
-
+    // Centraliza XZ e apoia o chão em Y = 0
     const box2 = new THREE.Box3().setFromObject(clone);
+    const center = new THREE.Vector3();
+    box2.getCenter(center);
+    clone.position.x -= center.x;
+    clone.position.z -= center.z;
     clone.position.y -= box2.min.y;
+    clone.updateMatrixWorld(true);
 
     const finalBox = new THREE.Box3().setFromObject(clone);
     if (mapBounds) {
@@ -220,7 +255,9 @@ function MapWorld({ mapRef, mapBounds }) {
         minX: finalBox.min.x + 2,
         maxX: finalBox.max.x - 2,
         minZ: finalBox.min.z + 2,
-        maxZ: finalBox.max.z - 2
+        maxZ: finalBox.max.z - 2,
+        minY: finalBox.min.y,
+        maxY: finalBox.max.y
       };
     }
 
@@ -231,17 +268,30 @@ function MapWorld({ mapRef, mapBounds }) {
       }
     });
 
+    if (onMapReady) {
+      // avisa no próximo tick (ref do mapa já montado)
+      queueMicrotask(() => onMapReady(clone));
+    }
+
     return clone;
-  }, [scene, mapBounds]);
+  }, [scene, mapBounds, onMapReady]);
 
   return <primitive ref={mapRef} object={model} />;
 }
 
-useGLTF.preload("/models/mapa.glb");
+useGLTF.preload(MAP_URL);
 
-function GarageMarker() {
+function GarageMarker({ mapRef }) {
+  const groupRef = useRef();
+
+  useFrame(() => {
+    if (!groupRef.current || !mapRef.current) return;
+    const y = sampleGroundY(mapRef.current, GARAGE_POS.x, GARAGE_POS.z);
+    groupRef.current.position.set(GARAGE_POS.x, y, GARAGE_POS.z);
+  });
+
   return (
-    <group position={[GARAGE_POS.x, 0, GARAGE_POS.z]}>
+    <group ref={groupRef} position={[GARAGE_POS.x, 0, GARAGE_POS.z]}>
       <mesh position={[0, 0.08, 0]} receiveShadow>
         <boxGeometry args={[14, 0.16, 14]} />
         <meshStandardMaterial
@@ -360,9 +410,17 @@ function Car({
   const velocity = useRef(0);
   const steering = useRef(0);
   const wheelsRef = useRef([]);
+  const groundedOnce = useRef(false);
 
   useFrame((_, delta) => {
     if (!carRef.current) return;
+
+    // Garante spawn em cima do mapa (primeira vez)
+    if (mapRef.current && !groundedOnce.current) {
+      const gy = sampleGroundY(mapRef.current, carRef.current.position.x, carRef.current.position.z);
+      carRef.current.position.y = gy + 0.15;
+      groundedOnce.current = true;
+    }
 
     if (inCar) {
       const keys = window.__keys || {};
@@ -420,7 +478,7 @@ function Car({
   });
 
   return (
-    <group ref={carRef} position={[0, 0.2, 0]}>
+    <group ref={carRef} position={[0, 8, 0]}>
       <CarModel key={carPath} path={carPath} wheelsRef={wheelsRef} />
     </group>
   );
@@ -435,12 +493,24 @@ function PlayerController({
   setNearGarage
 }) {
   const velocity = useRef(new THREE.Vector3());
+  const groundedOnce = useRef(false);
 
   useFrame((_, delta) => {
     if (!playerRef.current || inCar) {
       setIsMoving(false);
       if (setNearGarage) setNearGarage(false);
       return;
+    }
+
+    // Spawn no chão
+    if (mapRef.current && !groundedOnce.current) {
+      const gy = sampleGroundY(
+        mapRef.current,
+        playerRef.current.position.x,
+        playerRef.current.position.z
+      );
+      playerRef.current.position.y = gy;
+      groundedOnce.current = true;
     }
 
     const keys = window.__keys || {};
@@ -490,7 +560,10 @@ function PlayerController({
       0
     );
 
-    const distGarage = playerRef.current.position.distanceTo(GARAGE_POS);
+    // Garagem usa Y do chão também na distância XZ
+    const dx = playerRef.current.position.x - GARAGE_POS.x;
+    const dz = playerRef.current.position.z - GARAGE_POS.z;
+    const distGarage = Math.sqrt(dx * dx + dz * dz);
     setNearGarage(distGarage < GARAGE_RADIUS);
 
     if (moving) {
@@ -501,19 +574,11 @@ function PlayerController({
   return null;
 }
 
-/**
- * Câmera:
- * - 360° livre e PERMANECE onde você olhou (lateral, etc.)
- * - Só quando o carro se move (frente/ré) volta para a câmera do caminho
- */
 function CameraController({ target, inCar, mapRef, carVelocityRef }) {
   const { camera } = useThree();
   const yaw = useRef(window.__camera.yaw);
   const pitch = useRef(0.28);
   const smoothPos = useRef(null);
-
-  // true = usuário está no modo livre (não força caminho)
-  // false = seguir direção do movimento
   const followPath = useRef(true);
   const wasMoving = useRef(false);
 
@@ -525,13 +590,11 @@ function CameraController({ target, inCar, mapRef, carVelocityRef }) {
     const speed = carVelocityRef?.current ?? 0;
     const moving = Math.abs(speed) > 1.0;
 
-    // Acabou de começar a andar → reativa câmera do caminho
     if (inCar && moving && !wasMoving.current) {
       followPath.current = true;
     }
     wasMoving.current = inCar && moving;
 
-    // Se arrastou a tela, entra em 360° livre e FICA
     if (window.__cameraLooked) {
       followPath.current = false;
       window.__cameraLooked = false;
@@ -544,7 +607,6 @@ function CameraController({ target, inCar, mapRef, carVelocityRef }) {
     let turnSpeed;
 
     if (inCar && followPath.current) {
-      // Câmera do caminho (só com movimento ou até o usuário olhar)
       const forward = new THREE.Vector3(0, 0, 1);
       forward.applyQuaternion(target.current.quaternion);
 
@@ -557,11 +619,9 @@ function CameraController({ target, inCar, mapRef, carVelocityRef }) {
       lookHeight = 1.15;
       turnSpeed = moving ? 5.5 : 3.5;
 
-      // sincroniza __camera para o livre continuar de onde parou
       window.__camera.yaw = yaw.current;
       window.__camera.pitch = pitch.current;
     } else {
-      // 360° livre — usa exatamente o que o toque definiu
       desiredYaw = window.__camera.yaw;
       desiredPitch = clamp(window.__camera.pitch, 0.12, 0.75);
       desiredDist = inCar ? 13 : 8.5;
@@ -659,6 +719,9 @@ function Game({ setMessage, carPath, setNearGarage, garageOpen }) {
           const exitPos = new THREE.Vector3(-3.2, 0, 0);
           exitPos.applyQuaternion(carRef.current.quaternion);
           exitPos.add(carRef.current.position);
+          if (mapRef.current) {
+            exitPos.y = sampleGroundY(mapRef.current, exitPos.x, exitPos.z);
+          }
           playerRef.current.position.copy(exitPos);
         }
         setMessage("Você saiu do carro");
@@ -708,7 +771,7 @@ function Game({ setMessage, carPath, setNearGarage, garageOpen }) {
   return (
     <>
       <MapWorld mapRef={mapRef} mapBounds={mapBounds} />
-      <GarageMarker />
+      <GarageMarker mapRef={mapRef} />
 
       <Car
         carRef={carRef}
@@ -889,7 +952,6 @@ function CameraTouch() {
     const dy = e.clientY - last.current.y;
     last.current = { x: e.clientX, y: e.clientY };
 
-    // marca que o jogador quer 360° livre (não puxar de volta)
     if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
       window.__cameraLooked = true;
     }
@@ -951,7 +1013,7 @@ function App() {
           <div className="menu-card">
             <div className="logo">MINI CITY</div>
             <div className="subtitle">OPEN WORLD 3D</div>
-            <p>Arraste = 360° · Andar com o carro = câmera do caminho</p>
+            <p>Mapa local · E = carro · G = garagem</p>
             <button className="play-button" onClick={() => setStarted(true)}>
               JOGAR
             </button>
@@ -969,7 +1031,7 @@ function App() {
           <Canvas
             shadows
             dpr={[1, 1.5]}
-            camera={{ position: [0, 10, 16], fov: 55, near: 0.1, far: 300 }}
+            camera={{ position: [0, 20, 25], fov: 55, near: 0.1, far: 400 }}
             gl={{ antialias: true }}
           >
             <Sky sunPosition={[80, 30, 40]} />
