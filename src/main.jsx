@@ -34,14 +34,12 @@ function clamp(value, min, max) {
 }
 
 /* =========================================================
-   MAPA (Google Drive)
-   Compartilhar: "Qualquer pessoa com o link"
-   Se falhar (CORS / arquivo grande), use local:
-   const MAP_URL = "/models/mapa.glb";
+   MAPA (Dropbox — dl=1 = download direto)
+   Se falhar: const MAP_URL = "/models/mapa.glb";
 ========================================================= */
 
 const MAP_URL =
-  "https://drive.google.com/uc?export=download&id=1QpSrNHoal7Fd-m30VeA4kJKdBYPDwDBo";
+  "https://www.dropbox.com/scl/fi/go0q9erzpdaf2c56eukio/mapa.glb?rlkey=eivsiinivr2s20t7lng0mkdk6&st=nmzxbcie&dl=1";
 
 const CAR_CATALOG = [
   { id: "350z", name: "Nissan 350Z", file: "/models/350z.glb" },
@@ -513,8 +511,8 @@ function PlayerController({
 }
 
 /**
- * - Arraste = 360° livre e permanece
- * - Só quando o carro anda (frente/ré) volta para a câmera do caminho
+ * Arraste = 360° livre e permanece
+ * Só quando o carro anda (frente/ré) → câmera do caminho
  */
 function CameraController({ target, inCar, mapRef, carVelocityRef }) {
   const { camera } = useThree();
@@ -952,7 +950,7 @@ function App() {
           <div className="menu-card">
             <div className="logo">MINI CITY</div>
             <div className="subtitle">OPEN WORLD 3D</div>
-            <p>Mapa via Drive · E = carro · G = garagem</p>
+            <p>Mapa via Dropbox · E = carro · G = garagem</p>
             <button className="play-button" onClick={() => setStarted(true)}>
               JOGAR
             </button>
