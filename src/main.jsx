@@ -27,10 +27,21 @@ import "./style.css";
 window.__keys = {};
 window.__joystick = { x: 0, y: 0 };
 window.__camera = { yaw: 0, pitch: 0.32 };
+window.__cameraLooked = false;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
+
+/* =========================================================
+   MAPA (Google Drive)
+   Compartilhar: "Qualquer pessoa com o link"
+   Se falhar (CORS / arquivo grande), use local:
+   const MAP_URL = "/models/mapa.glb";
+========================================================= */
+
+const MAP_URL =
+  "https://drive.google.com/uc?export=download&id=1QpSrNHoal7Fd-m30VeA4kJKdBYPDwDBo";
 
 const CAR_CATALOG = [
   { id: "350z", name: "Nissan 350Z", file: "/models/350z.glb" },
@@ -194,7 +205,7 @@ function Player({ playerRef, inCar, isMoving }) {
 useGLTF.preload(CHAR_PATH);
 
 function MapWorld({ mapRef, mapBounds }) {
-  const { scene } = useGLTF("/models/mapa.glb");
+  const { scene } = useGLTF(MAP_URL);
 
   const model = useMemo(() => {
     const clone = scene.clone(true);
@@ -237,7 +248,7 @@ function MapWorld({ mapRef, mapBounds }) {
   return <primitive ref={mapRef} object={model} />;
 }
 
-useGLTF.preload("/models/mapa.glb");
+useGLTF.preload(MAP_URL);
 
 function GarageMarker() {
   return (
@@ -502,18 +513,14 @@ function PlayerController({
 }
 
 /**
- * Câmera:
- * - 360° livre e PERMANECE onde você olhou (lateral, etc.)
- * - Só quando o carro se move (frente/ré) volta para a câmera do caminho
+ * - Arraste = 360° livre e permanece
+ * - Só quando o carro anda (frente/ré) volta para a câmera do caminho
  */
 function CameraController({ target, inCar, mapRef, carVelocityRef }) {
   const { camera } = useThree();
   const yaw = useRef(window.__camera.yaw);
   const pitch = useRef(0.28);
   const smoothPos = useRef(null);
-
-  // true = usuário está no modo livre (não força caminho)
-  // false = seguir direção do movimento
   const followPath = useRef(true);
   const wasMoving = useRef(false);
 
@@ -525,13 +532,11 @@ function CameraController({ target, inCar, mapRef, carVelocityRef }) {
     const speed = carVelocityRef?.current ?? 0;
     const moving = Math.abs(speed) > 1.0;
 
-    // Acabou de começar a andar → reativa câmera do caminho
     if (inCar && moving && !wasMoving.current) {
       followPath.current = true;
     }
     wasMoving.current = inCar && moving;
 
-    // Se arrastou a tela, entra em 360° livre e FICA
     if (window.__cameraLooked) {
       followPath.current = false;
       window.__cameraLooked = false;
@@ -544,7 +549,6 @@ function CameraController({ target, inCar, mapRef, carVelocityRef }) {
     let turnSpeed;
 
     if (inCar && followPath.current) {
-      // Câmera do caminho (só com movimento ou até o usuário olhar)
       const forward = new THREE.Vector3(0, 0, 1);
       forward.applyQuaternion(target.current.quaternion);
 
@@ -557,11 +561,9 @@ function CameraController({ target, inCar, mapRef, carVelocityRef }) {
       lookHeight = 1.15;
       turnSpeed = moving ? 5.5 : 3.5;
 
-      // sincroniza __camera para o livre continuar de onde parou
       window.__camera.yaw = yaw.current;
       window.__camera.pitch = pitch.current;
     } else {
-      // 360° livre — usa exatamente o que o toque definiu
       desiredYaw = window.__camera.yaw;
       desiredPitch = clamp(window.__camera.pitch, 0.12, 0.75);
       desiredDist = inCar ? 13 : 8.5;
@@ -889,7 +891,6 @@ function CameraTouch() {
     const dy = e.clientY - last.current.y;
     last.current = { x: e.clientX, y: e.clientY };
 
-    // marca que o jogador quer 360° livre (não puxar de volta)
     if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
       window.__cameraLooked = true;
     }
@@ -951,7 +952,7 @@ function App() {
           <div className="menu-card">
             <div className="logo">MINI CITY</div>
             <div className="subtitle">OPEN WORLD 3D</div>
-            <p>Arraste = 360° · Andar com o carro = câmera do caminho</p>
+            <p>Mapa via Drive · E = carro · G = garagem</p>
             <button className="play-button" onClick={() => setStarted(true)}>
               JOGAR
             </button>
