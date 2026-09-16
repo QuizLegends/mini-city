@@ -16,7 +16,8 @@ import {
 import {
   Sky,
   useGLTF,
-  useAnimations
+  useAnimations,
+  Text
 } from "@react-three/drei";
 
 import * as THREE from "three";
@@ -50,7 +51,12 @@ const CAR_CATALOG = [
 
 // Garagem: XZ no mapa — Y é ajustado no chão
 const GARAGE_POS = new THREE.Vector3(0, 0, 18);
-const GARAGE_RADIUS = 12;
+const GARAGE_RADIUS = 7;
+
+// Dimensões da estrutura física da garagem (mantida pequena)
+const GARAGE_WIDTH = 7;
+const GARAGE_DEPTH = 6.2;
+const GARAGE_WALL_HEIGHT = 2.9;
 
 function getWorldNormal(hit) {
   if (!hit.face || !hit.object) return new THREE.Vector3(0, 1, 0);
@@ -281,6 +287,10 @@ function MapWorld({ mapRef, mapBounds, onMapReady }) {
 
 useGLTF.preload(MAP_URL);
 
+/* =========================================================
+   GARAGEM — estrutura pequena e detalhada
+========================================================= */
+
 function GarageMarker({ mapRef }) {
   const groupRef = useRef();
 
@@ -290,46 +300,263 @@ function GarageMarker({ mapRef }) {
     groupRef.current.position.set(GARAGE_POS.x, y, GARAGE_POS.z);
   });
 
+  // Ripas da parede traseira (efeito de chapa corrugada)
+  const backSlats = useMemo(() => {
+    const count = 16;
+    const usable = GARAGE_WIDTH - 0.2;
+    const w = usable / count;
+    return Array.from({ length: count }, (_, i) => ({
+      x: -usable / 2 + w * i + w / 2,
+      w
+    }));
+  }, []);
+
+  // Ripas das paredes laterais
+  const sideSlats = useMemo(() => {
+    const count = 14;
+    const usable = GARAGE_DEPTH - 0.2;
+    const w = usable / count;
+    return Array.from({ length: count }, (_, i) => ({
+      z: -usable / 2 + w * i + w / 2,
+      w
+    }));
+  }, []);
+
+  // Réguas do portão de enrolar
+  const doorSlats = useMemo(() => {
+    const count = 7;
+    const doorHeight = 2.45;
+    const h = doorHeight / count;
+    return Array.from({ length: count }, (_, i) => ({
+      y: -doorHeight / 2 + h * i + h / 2,
+      h
+    }));
+  }, []);
+
   return (
     <group ref={groupRef} position={[GARAGE_POS.x, 0, GARAGE_POS.z]}>
-      <mesh position={[0, 0.08, 0]} receiveShadow>
-        <boxGeometry args={[14, 0.16, 14]} />
-        <meshStandardMaterial
-          color="#0d2838"
-          emissive="#00a0c0"
-          emissiveIntensity={0.35}
-        />
+      {/* Base de concreto */}
+      <mesh position={[0, 0.05, 0]} receiveShadow>
+        <boxGeometry args={[GARAGE_WIDTH + 1.6, 0.1, GARAGE_DEPTH + 1.6]} />
+        <meshStandardMaterial color="#8c8c86" roughness={0.95} />
       </mesh>
-      {[-5, 5].map((x) =>
-        [-5, 5].map((z) => (
-          <mesh key={x + "-" + z} position={[x, 2, z]} castShadow>
-            <boxGeometry args={[0.5, 4, 0.5]} />
-            <meshStandardMaterial color="#1a2a35" metalness={0.4} />
-          </mesh>
-        ))
-      )}
-      <mesh position={[0, 4, 0]} castShadow>
-        <boxGeometry args={[1.6, 8, 1.6]} />
-        <meshStandardMaterial color="#102028" metalness={0.5} roughness={0.4} />
+
+      {/* Piso interno */}
+      <mesh position={[0, 0.11, 0]} receiveShadow>
+        <boxGeometry args={[GARAGE_WIDTH, 0.03, GARAGE_DEPTH]} />
+        <meshStandardMaterial color="#48484a" roughness={0.85} />
       </mesh>
-      <mesh position={[0, 7.2, 0.9]}>
-        <boxGeometry args={[3.2, 1.2, 0.2]} />
-        <meshStandardMaterial
-          color="#00e5ff"
-          emissive="#00e5ff"
-          emissiveIntensity={2}
-        />
-      </mesh>
-      <mesh position={[0, 0.12, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[4, 5.5, 32]} />
+
+      {/* Faixas de piso (linhas de vaga) */}
+      {[-1.5, 1.5].map((x) => (
+        <mesh key={"stripe-" + x} position={[x, 0.13, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <planeGeometry args={[0.12, GARAGE_DEPTH - 0.6]} />
+          <meshStandardMaterial color="#f2d94e" roughness={0.7} />
+        </mesh>
+      ))}
+
+      {/* Anel neon de sinalização no chão */}
+      <mesh position={[0, 0.14, GARAGE_DEPTH / 2 + 0.9]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[1.7, 2.05, 32]} />
         <meshStandardMaterial
           color="#00e5ff"
           emissive="#00e5ff"
-          emissiveIntensity={1.2}
+          emissiveIntensity={1.1}
           side={THREE.DoubleSide}
         />
       </mesh>
-      <pointLight position={[0, 6, 0]} intensity={1.4} distance={22} color="#00e5ff" />
+
+      {/* Pilares metálicos de canto */}
+      {[
+        [-GARAGE_WIDTH / 2 + 0.14, -GARAGE_DEPTH / 2 + 0.14],
+        [GARAGE_WIDTH / 2 - 0.14, -GARAGE_DEPTH / 2 + 0.14],
+        [-GARAGE_WIDTH / 2 + 0.14, GARAGE_DEPTH / 2 - 0.14],
+        [GARAGE_WIDTH / 2 - 0.14, GARAGE_DEPTH / 2 - 0.14]
+      ].map(([x, z], i) => (
+        <mesh
+          key={"pillar-" + i}
+          position={[x, GARAGE_WALL_HEIGHT / 2 + 0.1, z]}
+          castShadow
+        >
+          <cylinderGeometry args={[0.13, 0.16, GARAGE_WALL_HEIGHT + 0.2, 8]} />
+          <meshStandardMaterial color="#2b2f33" metalness={0.7} roughness={0.35} />
+        </mesh>
+      ))}
+
+      {/* Parede traseira corrugada */}
+      <group position={[0, GARAGE_WALL_HEIGHT / 2 + 0.1, -GARAGE_DEPTH / 2 + 0.05]}>
+        {backSlats.map((s, i) => (
+          <mesh
+            key={"back-slat-" + i}
+            position={[s.x, 0, i % 2 === 0 ? 0.025 : 0]}
+            castShadow
+            receiveShadow
+          >
+            <boxGeometry args={[s.w - 0.02, GARAGE_WALL_HEIGHT, 0.08]} />
+            <meshStandardMaterial
+              color={i % 2 === 0 ? "#5b6b74" : "#4f5d65"}
+              metalness={0.35}
+              roughness={0.55}
+            />
+          </mesh>
+        ))}
+      </group>
+
+      {/* Paredes laterais corrugadas */}
+      {[-1, 1].map((side) => (
+        <group
+          key={"side-" + side}
+          position={[side * (GARAGE_WIDTH / 2 - 0.05), GARAGE_WALL_HEIGHT / 2 + 0.1, 0]}
+        >
+          {sideSlats.map((s, i) => (
+            <mesh
+              key={"side-slat-" + side + "-" + i}
+              position={[i % 2 === 0 ? side * 0.025 : 0, 0, s.z]}
+              castShadow
+              receiveShadow
+            >
+              <boxGeometry args={[0.08, GARAGE_WALL_HEIGHT, s.w - 0.02]} />
+              <meshStandardMaterial
+                color={i % 2 === 0 ? "#5b6b74" : "#4f5d65"}
+                metalness={0.35}
+                roughness={0.55}
+              />
+            </mesh>
+          ))}
+        </group>
+      ))}
+
+      {/* Verga estrutural acima da porta */}
+      <mesh
+        position={[0, GARAGE_WALL_HEIGHT + 0.24, GARAGE_DEPTH / 2 - 0.02]}
+        castShadow
+      >
+        <boxGeometry args={[GARAGE_WIDTH - 0.3, 0.3, 0.16]} />
+        <meshStandardMaterial color="#2b2f33" metalness={0.5} roughness={0.5} />
+      </mesh>
+
+      {/* Portão de enrolar com réguas */}
+      <group position={[0, 1.34, GARAGE_DEPTH / 2 - 0.02]}>
+        {doorSlats.map((s, i) => (
+          <mesh key={"door-slat-" + i} position={[0, s.y, 0]} castShadow receiveShadow>
+            <boxGeometry args={[3.35, s.h - 0.03, 0.1]} />
+            <meshStandardMaterial
+              color={i % 2 === 0 ? "#d8d8d2" : "#c4c4be"}
+              metalness={0.25}
+              roughness={0.4}
+            />
+          </mesh>
+        ))}
+        {/* Moldura da porta */}
+        <mesh position={[0, 0, -0.03]}>
+          <boxGeometry args={[3.5, 2.6, 0.04]} />
+          <meshStandardMaterial color="#1c1f22" metalness={0.5} roughness={0.5} />
+        </mesh>
+        {/* Puxador central */}
+        <mesh position={[0, -1.1, 0.08]}>
+          <boxGeometry args={[0.6, 0.08, 0.06]} />
+          <meshStandardMaterial color="#101214" metalness={0.6} roughness={0.3} />
+        </mesh>
+      </group>
+
+      {/* Batentes laterais da porta */}
+      {[-1.78, 1.78].map((x) => (
+        <mesh
+          key={"jamb-" + x}
+          position={[x, GARAGE_WALL_HEIGHT / 2 - 0.05, GARAGE_DEPTH / 2 - 0.02]}
+          castShadow
+        >
+          <boxGeometry args={[0.16, GARAGE_WALL_HEIGHT - 0.1, 0.18]} />
+          <meshStandardMaterial color="#2b2f33" metalness={0.5} roughness={0.5} />
+        </mesh>
+      ))}
+
+      {/* Telhado de duas águas */}
+      <group position={[0, GARAGE_WALL_HEIGHT + 0.25, 0]}>
+        <mesh
+          position={[0, 0.24, -GARAGE_DEPTH / 4]}
+          rotation={[0.22, 0, 0]}
+          castShadow
+          receiveShadow
+        >
+          <boxGeometry args={[GARAGE_WIDTH + 0.6, 0.08, GARAGE_DEPTH / 2 + 0.5]} />
+          <meshStandardMaterial color="#7a2f2f" metalness={0.2} roughness={0.6} />
+        </mesh>
+        <mesh
+          position={[0, 0.24, GARAGE_DEPTH / 4]}
+          rotation={[-0.22, 0, 0]}
+          castShadow
+          receiveShadow
+        >
+          <boxGeometry args={[GARAGE_WIDTH + 0.6, 0.08, GARAGE_DEPTH / 2 + 0.5]} />
+          <meshStandardMaterial color="#7a2f2f" metalness={0.2} roughness={0.6} />
+        </mesh>
+        {/* Cumeeira */}
+        <mesh position={[0, 0.42, 0]} castShadow>
+          <boxGeometry args={[GARAGE_WIDTH + 0.5, 0.12, 0.12]} />
+          <meshStandardMaterial color="#3a1c1c" roughness={0.6} />
+        </mesh>
+        {/* Beiral frontal */}
+        <mesh position={[0, -0.02, GARAGE_DEPTH / 2 + 0.35]} castShadow>
+          <boxGeometry args={[GARAGE_WIDTH + 0.7, 0.1, 0.25]} />
+          <meshStandardMaterial color="#5c2424" roughness={0.55} />
+        </mesh>
+      </group>
+
+      {/* Placa luminosa com o nome */}
+      <mesh position={[0, GARAGE_WALL_HEIGHT + 0.62, GARAGE_DEPTH / 2 + 0.06]}>
+        <boxGeometry args={[3.1, 0.6, 0.07]} />
+        <meshStandardMaterial
+          color="#0d2838"
+          emissive="#00a0c0"
+          emissiveIntensity={0.4}
+          metalness={0.3}
+          roughness={0.4}
+        />
+      </mesh>
+      <mesh position={[0, GARAGE_WALL_HEIGHT + 0.62, GARAGE_DEPTH / 2 + 0.1]}>
+        <boxGeometry args={[2.9, 0.42, 0.02]} />
+        <meshStandardMaterial
+          color="#04141c"
+          emissive="#00c8e8"
+          emissiveIntensity={0.25}
+        />
+      </mesh>
+      <Text
+        position={[0, GARAGE_WALL_HEIGHT + 0.62, GARAGE_DEPTH / 2 + 0.12]}
+        fontSize={0.3}
+        color="#00f0ff"
+        anchorX="center"
+        anchorY="middle"
+        letterSpacing={0.06}
+      >
+        GARAGEM
+      </Text>
+
+      {/* Luminária sobre a porta */}
+      <mesh position={[0, GARAGE_WALL_HEIGHT + 0.02, GARAGE_DEPTH / 2 + 0.16]} castShadow>
+        <boxGeometry args={[0.3, 0.12, 0.14]} />
+        <meshStandardMaterial color="#1c1f22" metalness={0.6} roughness={0.4} />
+      </mesh>
+      <mesh position={[0, GARAGE_WALL_HEIGHT - 0.04, GARAGE_DEPTH / 2 + 0.16]}>
+        <sphereGeometry args={[0.05, 8, 8]} />
+        <meshStandardMaterial color="#fff1c9" emissive="#fff1c9" emissiveIntensity={1.5} />
+      </mesh>
+      <pointLight
+        position={[0, GARAGE_WALL_HEIGHT + 0.1, GARAGE_DEPTH / 2 + 0.7]}
+        intensity={1.1}
+        distance={9}
+        color="#fff1c9"
+      />
+
+      {/* Luz interna ambiente da garagem */}
+      <pointLight position={[0, GARAGE_WALL_HEIGHT - 0.2, 0]} intensity={0.9} distance={9} color="#bfe8ff" />
+
+      {/* Extintor na parede lateral (detalhe) */}
+      <mesh position={[GARAGE_WIDTH / 2 - 0.18, 1.1, GARAGE_DEPTH / 2 - 1.2]} castShadow>
+        <cylinderGeometry args={[0.06, 0.06, 0.32, 8]} />
+        <meshStandardMaterial color="#b22222" metalness={0.2} roughness={0.4} />
+      </mesh>
     </group>
   );
 }
