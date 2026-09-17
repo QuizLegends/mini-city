@@ -15,6 +15,7 @@ import {
 
 import {
   Sky,
+  Environment,
   useGLTF,
   useAnimations,
   Text
@@ -75,6 +76,11 @@ const TOWER_OUTER_RADIUS = RAMP_OUTER_RADIUS + 3.2;
 const TOWER_HEIGHT = TOWER_LEVELS * TOWER_LEVEL_HEIGHT;
 const RAMP_SEGMENTS_PER_TURN = 24;
 const RAIL_HEIGHT = 0.85;
+
+// Fachada espelhada + topo plano com barreira
+const FACADE_ENTRANCE_ANGLE = THREE.MathUtils.degToRad(50); // largura da entrada térrea
+const ROOF_INSET = 0.3; // recuo do topo em relação às colunas externas
+const ROOF_RAIL_HEIGHT = 1.05;
 
 function getWorldNormal(hit) {
   if (!hit.face || !hit.object) return new THREE.Vector3(0, 1, 0);
@@ -523,9 +529,9 @@ function DriftTower({ mapRef, mapBounds, onMapReady }) {
       const angle = (i / columnCount) * Math.PI * 2;
       const col = new THREE.Mesh(columnGeo, columnMat);
       col.position.set(
-        TOWER_POS.x + Math.cos(angle) * TOWER_OUTER_RADIUS,
+        TOWER_POS.x + Math.cos(angle) * (TOWER_OUTER_RADIUS + 0.22),
         TOWER_POS.y + TOWER_HEIGHT / 2,
-        TOWER_POS.z + Math.sin(angle) * TOWER_OUTER_RADIUS
+        TOWER_POS.z + Math.sin(angle) * (TOWER_OUTER_RADIUS + 0.22)
       );
       col.castShadow = true;
       col.receiveShadow = true;
@@ -540,7 +546,7 @@ function DriftTower({ mapRef, mapBounds, onMapReady }) {
     });
     for (let lvl = 0; lvl <= TOWER_LEVELS; lvl++) {
       const y = lvl * TOWER_LEVEL_HEIGHT;
-      const beamGeo = new THREE.TorusGeometry(TOWER_OUTER_RADIUS, 0.22, 8, 48);
+      const beamGeo = new THREE.TorusGeometry(TOWER_OUTER_RADIUS + 0.16, 0.22, 8, 48);
       const beam = new THREE.Mesh(beamGeo, beamMat);
       beam.rotation.x = Math.PI / 2;
       beam.position.set(TOWER_POS.x, TOWER_POS.y + y, TOWER_POS.z);
@@ -548,6 +554,123 @@ function DriftTower({ mapRef, mapBounds, onMapReady }) {
       beam.receiveShadow = true;
       g.add(beam);
     }
+
+    // ---------- Fachada espelhada (hiper-reflexiva, esconde o interior) ----------
+    // Material tipo "espelho": metalness alto + roughness baixo. As reflexões
+    // vêm do <Environment> adicionado no Canvas (scene.environment), então de
+    // fora só se vê o reflexo do ambiente, nunca o que está dentro da torre.
+    const facadeMat = new THREE.MeshStandardMaterial({
+      color: "#eef5f7",
+      metalness: 1,
+      roughness: 0.04,
+      envMapIntensity: 1.5,
+      side: THREE.DoubleSide
+    });
+
+    // Térreo: parede espelhada ao redor de toda a torre, com um vão (entrada)
+    // alinhado ao início da rampa, para os carros entrarem/saírem.
+    const entranceHalf = FACADE_ENTRANCE_ANGLE / 2;
+    const groundWallGeo = new THREE.CylinderGeometry(
+      TOWER_OUTER_RADIUS,
+      TOWER_OUTER_RADIUS,
+      TOWER_LEVEL_HEIGHT,
+      64,
+      1,
+      true,
+      entranceHalf,
+      Math.PI * 2 - FACADE_ENTRANCE_ANGLE
+    );
+    const groundWall = new THREE.Mesh(groundWallGeo, facadeMat);
+    groundWall.position.set(
+      TOWER_POS.x,
+      TOWER_POS.y + TOWER_LEVEL_HEIGHT / 2,
+      TOWER_POS.z
+    );
+    groundWall.castShadow = true;
+    groundWall.receiveShadow = true;
+    g.add(groundWall);
+
+    // Do 1º andar até o topo: casca espelhada fechada por completo — de fora
+    // não dá pra ver nada do que acontece dentro da torre.
+    const upperWallHeight = TOWER_HEIGHT - TOWER_LEVEL_HEIGHT;
+    const upperWallGeo = new THREE.CylinderGeometry(
+      TOWER_OUTER_RADIUS,
+      TOWER_OUTER_RADIUS,
+      upperWallHeight,
+      64,
+      1,
+      true
+    );
+    const upperWall = new THREE.Mesh(upperWallGeo, facadeMat);
+    upperWall.position.set(
+      TOWER_POS.x,
+      TOWER_POS.y + TOWER_LEVEL_HEIGHT + upperWallHeight / 2,
+      TOWER_POS.z
+    );
+    upperWall.castShadow = true;
+    upperWall.receiveShadow = true;
+    g.add(upperWall);
+
+    // ---------- Topo plano (fim da rampa) com barreira de proteção ----------
+    // Laje plana cobrindo do núcleo até perto das colunas externas — dá
+    // espaço de circulação/manobra em vez da rampa terminar no vazio.
+    const roofOuter = TOWER_OUTER_RADIUS - ROOF_INSET;
+    const roofY = TOWER_POS.y + TOWER_HEIGHT + 0.02;
+    const roofGeo = new THREE.RingGeometry(
+      TOWER_CORE_RADIUS + 0.4,
+      roofOuter,
+      64
+    );
+    const roofMat = new THREE.MeshStandardMaterial({
+      color: "#5a5a5d",
+      roughness: 0.88,
+      metalness: 0.05,
+      side: THREE.DoubleSide
+    });
+    const roof = new THREE.Mesh(roofGeo, roofMat);
+    roof.rotation.x = -Math.PI / 2;
+    roof.position.set(TOWER_POS.x, roofY, TOWER_POS.z);
+    roof.receiveShadow = true;
+    g.add(roof);
+
+    // Barreira (guard-rail) ao redor de toda a circunferência do topo —
+    // o carro colide nela em vez de voar para fora do prédio.
+    const roofRailGeo = new THREE.CylinderGeometry(
+      roofOuter,
+      roofOuter,
+      ROOF_RAIL_HEIGHT,
+      64,
+      1,
+      true
+    );
+    const roofRailMat = new THREE.MeshStandardMaterial({
+      color: "#4a4f52",
+      roughness: 0.5,
+      metalness: 0.45,
+      side: THREE.DoubleSide
+    });
+    const roofRail = new THREE.Mesh(roofRailGeo, roofRailMat);
+    roofRail.position.set(
+      TOWER_POS.x,
+      roofY + ROOF_RAIL_HEIGHT / 2,
+      TOWER_POS.z
+    );
+    roofRail.castShadow = true;
+    roofRail.receiveShadow = true;
+    g.add(roofRail);
+
+    // Corrimão fino no topo da barreira do telhado — mesmo acabamento das
+    // rampas internas.
+    const roofRailCapGeo = new THREE.TorusGeometry(roofOuter, 0.06, 6, 64);
+    const roofRailCap = new THREE.Mesh(roofRailCapGeo, railCapMat);
+    roofRailCap.rotation.x = Math.PI / 2;
+    roofRailCap.position.set(
+      TOWER_POS.x,
+      roofY + ROOF_RAIL_HEIGHT,
+      TOWER_POS.z
+    );
+    roofRailCap.castShadow = true;
+    g.add(roofRailCap);
 
     // ---------- Base / fundação visível no térreo ----------
     const baseGeo = new THREE.CylinderGeometry(
@@ -1570,6 +1693,7 @@ function App() {
             gl={{ antialias: true }}
           >
             <Sky sunPosition={[80, 30, 40]} />
+            <Environment preset="city" background={false} />
             <Game
               setMessage={setMessage}
               carPath={carPath}
