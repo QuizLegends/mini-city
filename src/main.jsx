@@ -61,9 +61,9 @@ const GARAGE_WALL_HEIGHT = 2.9;
 // ESQUERDA em relação a esse mesmo portão (-X, considerando quem está "saindo" pelo portão).
 const GARAGE_SPACE_UNIT = GARAGE_WIDTH;
 const GARAGE_POS = new THREE.Vector3(
-  0 + 5 * GARAGE_SPACE_UNIT - 2 * GARAGE_SPACE_UNIT, // 5 espaços p/ esquerda do portão, depois +2 espaços p/ frente do portão (-X, direção atual do portão)
+  0 + 5 * GARAGE_SPACE_UNIT - 2 * GARAGE_SPACE_UNIT - 0.5 * GARAGE_SPACE_UNIT, // ... depois +0,5 espaço p/ frente do portão (-X)
   0,
-  18 + 4 * GARAGE_SPACE_UNIT // 4 espaços para frente do portão
+  18 + 4 * GARAGE_SPACE_UNIT - 0.5 * GARAGE_SPACE_UNIT // 4 espaços p/ frente + 0,5 espaço p/ direita do portão (-Z)
 );
 const GARAGE_RADIUS = 7;
 
