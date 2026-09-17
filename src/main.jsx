@@ -82,6 +82,17 @@ const FACADE_ENTRANCE_ANGLE = THREE.MathUtils.degToRad(50); // largura da entrad
 const ROOF_INSET = 0.3; // recuo do topo em relação às colunas externas
 const ROOF_RAIL_HEIGHT = 1.05;
 
+// Reflexo de verdade (cubemap dinâmico): tudo que pertence à estrutura da
+// torre fica nesta camada, para não aparecer na sua própria "câmera de
+// espelho" — assim ela só captura o mundo ao redor (carros, personagem,
+// chão, céu), como um espelho de verdade.
+const STRUCTURE_LAYER = 1;
+const TOWER_MIRROR_POINT = new THREE.Vector3(
+  TOWER_POS.x,
+  TOWER_HEIGHT * 0.45,
+  TOWER_POS.z
+);
+
 function getWorldNormal(hit) {
   if (!hit.face || !hit.object) return new THREE.Vector3(0, 1, 0);
   const normalMatrix = new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld);
@@ -688,6 +699,19 @@ function DriftTower({ mapRef, mapBounds, onMapReady }) {
     base.receiveShadow = true;
     g.add(base);
 
+    // A torre não deve aparecer na sua própria reflexão — só o chão da
+    // praça fica na camada padrão; todo o resto da estrutura vai para
+    // STRUCTURE_LAYER, invisível para a câmera do espelho.
+    g.traverse((child) => {
+      if (child === plaza) return;
+      if (child.isMesh) child.layers.set(STRUCTURE_LAYER);
+    });
+
+    // Guarda a referência do material espelhado para a câmera de reflexo
+    // conseguir ligar nela a textura dinâmica (cubemap) assim que estiver
+    // pronta.
+    g.userData.facadeMat = facadeMat;
+
     g.updateMatrixWorld(true);
 
     const finalBox = new THREE.Box3().setFromObject(g);
@@ -710,6 +734,63 @@ function DriftTower({ mapRef, mapBounds, onMapReady }) {
   }, [mapBounds, onMapReady]);
 
   return <primitive ref={mapRef} object={group} />;
+}
+
+/**
+ * Espelho de verdade: uma câmera cúbica (CubeCamera) fica plantada dentro
+ * da torre e, a cada poucos quadros, fotografa o que está ao redor dela em
+ * 360° (carros, o personagem, o chão, o céu). Como toda a estrutura da
+ * torre está em STRUCTURE_LAYER — fora do alcance dessa câmera — o que ela
+ * enxerga é só o mundo "de fora", e é isso que vira o reflexo aplicado no
+ * material espelhado da fachada. É a mesma técnica usada para esferas
+ * cromadas em tempo real: uma aproximação por um único ponto, não um
+ * reflexo fisicamente exato por pixel, mas o suficiente para mostrar de
+ * verdade quem está por perto.
+ */
+function MirrorCubeCamera({
+  facadeMatRef,
+  point,
+  resolution = 192,
+  updateEvery = 2
+}) {
+  const { gl, scene } = useThree();
+  const frame = useRef(0);
+
+  const renderTarget = useMemo(() => {
+    return new THREE.WebGLCubeRenderTarget(resolution, {
+      format: THREE.RGBAFormat,
+      generateMipmaps: true,
+      minFilter: THREE.LinearMipmapLinearFilter
+    });
+  }, [resolution]);
+
+  const cubeCamera = useMemo(() => {
+    const cam = new THREE.CubeCamera(0.5, 260, renderTarget);
+    cam.position.copy(point);
+    return cam;
+  }, [renderTarget, point]);
+
+  useEffect(() => {
+    scene.add(cubeCamera);
+    return () => {
+      scene.remove(cubeCamera);
+      renderTarget.dispose();
+    };
+  }, [scene, cubeCamera, renderTarget]);
+
+  useFrame(() => {
+    if (facadeMatRef.current && !facadeMatRef.current.envMap) {
+      facadeMatRef.current.envMap = renderTarget.texture;
+      facadeMatRef.current.needsUpdate = true;
+    }
+
+    frame.current += 1;
+    if (frame.current % updateEvery !== 0) return;
+
+    cubeCamera.update(gl, scene);
+  });
+
+  return null;
 }
 
 /* =========================================================
@@ -1332,6 +1413,7 @@ function Game({ setMessage, carPath, setNearGarage, garageOpen }) {
   const mapRef = useRef();
   const mapBounds = useRef(null);
   const carVelocityRef = useRef(0);
+  const facadeMatRef = useRef(null);
 
   const [inCar, setInCar] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
@@ -1422,8 +1504,15 @@ function Game({ setMessage, carPath, setNearGarage, garageOpen }) {
 
   return (
     <>
-      <DriftTower mapRef={mapRef} mapBounds={mapBounds} />
+      <DriftTower
+        mapRef={mapRef}
+        mapBounds={mapBounds}
+        onMapReady={(g) => {
+          facadeMatRef.current = g.userData.facadeMat;
+        }}
+      />
       <GarageMarker mapRef={mapRef} />
+      <MirrorCubeCamera facadeMatRef={facadeMatRef} point={TOWER_MIRROR_POINT} />
 
       <Car
         carRef={carRef}
