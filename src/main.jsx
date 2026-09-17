@@ -54,6 +54,10 @@ const GARAGE_WIDTH = 7;
 const GARAGE_DEPTH = 6.2;
 const GARAGE_WALL_HEIGHT = 2.9;
 
+// Portão do tamanho exato da frente da garagem (sem vãos visíveis pras laterais)
+const DOOR_WIDTH = GARAGE_WIDTH - 0.5;
+const DOOR_HEIGHT = GARAGE_WALL_HEIGHT;
+
 // Garagem: XZ no mapa — Y é ajustado no chão
 // Posição base era (0,0,18) com o portão virado para +Z (o mesmo sentido da reta do spawn).
 // "1 espaço" = o tamanho da própria garagem (usamos a largura, 7 unidades) para os dois eixos.
@@ -70,6 +74,32 @@ const GARAGE_RADIUS = 7;
 // Giro de 90° (1/4 de 360°) para a direita: o portão, que apontava para +Z,
 // passa a apontar para +X (fica virado para o lado direito).
 const GARAGE_ROTATION_Y = -Math.PI / 2;
+
+// Colisão da garagem: como ela está girada 90°, a largura e a profundidade
+// trocam de eixo no mundo (largura passa a se estender em Z, profundidade em X).
+const GARAGE_COLLISION_HALF_X = GARAGE_DEPTH / 2 + 0.15;
+const GARAGE_COLLISION_HALF_Z = GARAGE_WIDTH / 2 + 0.15;
+
+/** Empurra o jogador/carro para fora da caixa sólida da garagem, se estiver entrando nela. */
+function resolveGarageCollision(pos, entityRadius) {
+  const halfX = GARAGE_COLLISION_HALF_X + entityRadius;
+  const halfZ = GARAGE_COLLISION_HALF_Z + entityRadius;
+  const dx = pos.x - GARAGE_POS.x;
+  const dz = pos.z - GARAGE_POS.z;
+
+  if (Math.abs(dx) >= halfX || Math.abs(dz) >= halfZ) return pos;
+
+  const penX = halfX - Math.abs(dx);
+  const penZ = halfZ - Math.abs(dz);
+  const result = pos.clone();
+
+  if (penX < penZ) {
+    result.x = GARAGE_POS.x + Math.sign(dx || 1) * halfX;
+  } else {
+    result.z = GARAGE_POS.z + Math.sign(dz || 1) * halfZ;
+  }
+  return result;
+}
 
 function getWorldNormal(hit) {
   if (!hit.face || !hit.object) return new THREE.Vector3(0, 1, 0);
@@ -335,13 +365,12 @@ function GarageMarker({ mapRef }) {
     }));
   }, []);
 
-  // Réguas do portão de enrolar
+  // Réguas do portão de enrolar — agora ocupa toda a largura/altura da frente
   const doorSlats = useMemo(() => {
-    const count = 7;
-    const doorHeight = 2.45;
-    const h = doorHeight / count;
+    const count = 8;
+    const h = DOOR_HEIGHT / count;
     return Array.from({ length: count }, (_, i) => ({
-      y: -doorHeight / 2 + h * i + h / 2,
+      y: -DOOR_HEIGHT / 2 + h * i + h / 2,
       h
     }));
   }, []);
@@ -452,11 +481,11 @@ function GarageMarker({ mapRef }) {
         <meshStandardMaterial color="#2b2f33" metalness={0.5} roughness={0.5} />
       </mesh>
 
-      {/* Portão de enrolar com réguas */}
-      <group position={[0, 1.34, GARAGE_DEPTH / 2 - 0.02]}>
+      {/* Portão de enrolar com réguas — mesma largura/altura da parede da frente */}
+      <group position={[0, GARAGE_WALL_HEIGHT / 2 + 0.1, GARAGE_DEPTH / 2 - 0.02]}>
         {doorSlats.map((s, i) => (
           <mesh key={"door-slat-" + i} position={[0, s.y, 0]} castShadow receiveShadow>
-            <boxGeometry args={[3.35, s.h - 0.03, 0.1]} />
+            <boxGeometry args={[DOOR_WIDTH, s.h - 0.03, 0.1]} />
             <meshStandardMaterial
               color={i % 2 === 0 ? "#d8d8d2" : "#c4c4be"}
               metalness={0.25}
@@ -466,24 +495,24 @@ function GarageMarker({ mapRef }) {
         ))}
         {/* Moldura da porta */}
         <mesh position={[0, 0, -0.03]}>
-          <boxGeometry args={[3.5, 2.6, 0.04]} />
+          <boxGeometry args={[DOOR_WIDTH + 0.15, DOOR_HEIGHT + 0.12, 0.04]} />
           <meshStandardMaterial color="#1c1f22" metalness={0.5} roughness={0.5} />
         </mesh>
         {/* Puxador central */}
-        <mesh position={[0, -1.1, 0.08]}>
+        <mesh position={[0, -DOOR_HEIGHT / 2 + 0.4, 0.08]}>
           <boxGeometry args={[0.6, 0.08, 0.06]} />
           <meshStandardMaterial color="#101214" metalness={0.6} roughness={0.3} />
         </mesh>
       </group>
 
-      {/* Batentes laterais da porta */}
-      {[-1.78, 1.78].map((x) => (
+      {/* Batentes finos entre o portão e os pilares de canto */}
+      {[-(DOOR_WIDTH / 2 + 0.09), DOOR_WIDTH / 2 + 0.09].map((x) => (
         <mesh
           key={"jamb-" + x}
-          position={[x, GARAGE_WALL_HEIGHT / 2 - 0.05, GARAGE_DEPTH / 2 - 0.02]}
+          position={[x, GARAGE_WALL_HEIGHT / 2 + 0.1, GARAGE_DEPTH / 2 - 0.02]}
           castShadow
         >
-          <boxGeometry args={[0.16, GARAGE_WALL_HEIGHT - 0.1, 0.18]} />
+          <boxGeometry args={[0.14, GARAGE_WALL_HEIGHT, 0.18]} />
           <meshStandardMaterial color="#2b2f33" metalness={0.5} roughness={0.5} />
         </mesh>
       ))}
@@ -699,6 +728,8 @@ function Car({
         next.z = clamp(next.z, b.minZ, b.maxZ);
       }
 
+      next = resolveGarageCollision(next, 2.0);
+
       carRef.current.position.x = next.x;
       carRef.current.position.z = next.z;
       carRef.current.position.y = stickToGround(
@@ -795,6 +826,8 @@ function PlayerController({
       next.x = clamp(next.x, b.minX, b.maxX);
       next.z = clamp(next.z, b.minZ, b.maxZ);
     }
+
+    next = resolveGarageCollision(next, 0.45);
 
     playerRef.current.position.x = next.x;
     playerRef.current.position.z = next.z;
