@@ -103,6 +103,7 @@ function getWorldNormal(hit) {
 function sampleGroundY(mapObject, x, z, fromY = 80, far = 120) {
   if (!mapObject) return 0;
   const ray = new THREE.Raycaster();
+  ray.layers.enableAll();
   ray.set(new THREE.Vector3(x, fromY, z), new THREE.Vector3(0, -1, 0));
   ray.far = far;
   const hits = ray.intersectObject(mapObject, true);
@@ -123,6 +124,7 @@ function moveWithSlide(pos, delta, mapObject, radius) {
   if (!mapObject) return pos.clone().add(delta);
 
   const ray = new THREE.Raycaster();
+  ray.layers.enableAll();
   const result = pos.clone();
   const heights = [0.35, 0.75, 1.15];
 
@@ -177,6 +179,7 @@ function stickToGround(pos, mapObject, yOffset) {
   if (!mapObject) return pos.y;
 
   const ray = new THREE.Raycaster();
+  ray.layers.enableAll();
   const origin = new THREE.Vector3(pos.x, pos.y + 2.1, pos.z);
   ray.set(origin, new THREE.Vector3(0, -1, 0));
   ray.far = 4.2;
@@ -1315,6 +1318,14 @@ function CameraController({ target, inCar, mapRef, carVelocityRef }) {
   const followPath = useRef(true);
   const wasMoving = useRef(false);
 
+  useEffect(() => {
+    // A torre e a garagem vivem em STRUCTURE_LAYER para ficarem fora do
+    // reflexo do espelho (veja MirrorCubeCamera). A câmera principal do
+    // jogo precisa enxergar essa camada também, senão a torre desaparece
+    // da visão normal.
+    camera.layers.enable(STRUCTURE_LAYER);
+  }, [camera]);
+
   useFrame((_, delta) => {
     if (!target.current) return;
 
@@ -1379,6 +1390,7 @@ function CameraController({ target, inCar, mapRef, carVelocityRef }) {
 
     if (mapRef.current) {
       const ray = new THREE.Raycaster();
+      ray.layers.enableAll();
       const from = targetPos.clone();
       from.y += 1.2;
       const dir = desiredPos.clone().sub(from).normalize();
@@ -1414,9 +1426,16 @@ function Game({ setMessage, carPath, setNearGarage, garageOpen }) {
   const mapBounds = useRef(null);
   const carVelocityRef = useRef(0);
   const facadeMatRef = useRef(null);
+  const lightRef = useRef();
 
   const [inCar, setInCar] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
+
+  useEffect(() => {
+    if (lightRef.current) {
+      lightRef.current.shadow.camera.layers.enable(STRUCTURE_LAYER);
+    }
+  }, []);
 
   useEffect(() => {
     const down = (e) => {
@@ -1544,6 +1563,7 @@ function Game({ setMessage, carPath, setNearGarage, garageOpen }) {
 
       <ambientLight intensity={1.15} />
       <directionalLight
+        ref={lightRef}
         position={[60, 90, 40]}
         intensity={2.3}
         castShadow
