@@ -61,7 +61,7 @@ const GARAGE_WALL_HEIGHT = 2.9;
 // ESQUERDA em relação a esse mesmo portão (-X, considerando quem está "saindo" pelo portão).
 const GARAGE_SPACE_UNIT = GARAGE_WIDTH;
 const GARAGE_POS = new THREE.Vector3(
-  0 - 5 * GARAGE_SPACE_UNIT, // 5 espaços para a esquerda do portão
+  0 + 5 * GARAGE_SPACE_UNIT, // 5 espaços para a esquerda do portão
   0,
   18 + 4 * GARAGE_SPACE_UNIT // 4 espaços para frente do portão
 );
@@ -69,7 +69,7 @@ const GARAGE_RADIUS = 7;
 
 // Giro de 90° (1/4 de 360°) para a direita: o portão, que apontava para +Z,
 // passa a apontar para +X (fica virado para o lado direito).
-const GARAGE_ROTATION_Y = Math.PI / 2;
+const GARAGE_ROTATION_Y = -Math.PI / 2;
 
 function getWorldNormal(hit) {
   if (!hit.face || !hit.object) return new THREE.Vector3(0, 1, 0);
