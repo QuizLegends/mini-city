@@ -15,7 +15,6 @@ import {
 
 import {
   Sky,
-  Environment,
   useGLTF,
   useAnimations,
   Text
@@ -36,8 +35,10 @@ function clamp(value, min, max) {
 }
 
 /* =========================================================
-   VEÍCULOS / PERSONAGEM
+   MAPA LOCAL
 ========================================================= */
+
+const MAP_URL = "/models/mapa.glb";
 
 const CAR_CATALOG = [
   { id: "350z", name: "Nissan 350Z", file: "/models/350z.glb" },
@@ -57,53 +58,16 @@ const GARAGE_WIDTH = 7;
 const GARAGE_DEPTH = 6.2;
 const GARAGE_WALL_HEIGHT = 2.9;
 
-/* =========================================================
-   TORRE DE ESTACIONAMENTO COM RAMPA ESPIRAL
-   (inspirada em Velozes e Furiosos: Desafio em Tóquio)
-========================================================= */
-
-// Posição do centro da torre no mapa (longe da garagem/spawn)
-const TOWER_POS = new THREE.Vector3(0, 0, -70);
-
-const TOWER_LEVELS = 9;
-const TOWER_LEVEL_HEIGHT = 4.2;
-const TOWER_CORE_RADIUS = 6;
-const RAMP_GAP = 1.6;
-const RAMP_WIDTH = 8.5;
-const RAMP_INNER_RADIUS = TOWER_CORE_RADIUS + RAMP_GAP;
-const RAMP_OUTER_RADIUS = RAMP_INNER_RADIUS + RAMP_WIDTH;
-const TOWER_OUTER_RADIUS = RAMP_OUTER_RADIUS + 3.2;
-const TOWER_HEIGHT = TOWER_LEVELS * TOWER_LEVEL_HEIGHT;
-const RAMP_SEGMENTS_PER_TURN = 24;
-const RAIL_HEIGHT = 0.85;
-
-// Fachada espelhada + topo plano com barreira
-const FACADE_ENTRANCE_ANGLE = THREE.MathUtils.degToRad(50); // largura da entrada térrea
-const ROOF_INSET = 0.3; // recuo do topo em relação às colunas externas
-const ROOF_RAIL_HEIGHT = 1.05;
-
-// Reflexo de verdade (cubemap dinâmico): tudo que pertence à estrutura da
-// torre fica nesta camada, para não aparecer na sua própria "câmera de
-// espelho" — assim ela só captura o mundo ao redor (carros, personagem,
-// chão, céu), como um espelho de verdade.
-const STRUCTURE_LAYER = 1;
-const TOWER_MIRROR_POINT = new THREE.Vector3(
-  TOWER_POS.x,
-  TOWER_HEIGHT * 0.45,
-  TOWER_POS.z
-);
-
 function getWorldNormal(hit) {
   if (!hit.face || !hit.object) return new THREE.Vector3(0, 1, 0);
   const normalMatrix = new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld);
   return hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
 }
 
-/** Raycast para achar altura do chão (usado só na primeira vez / posições fixas) */
+/** Raycast para achar altura do chão */
 function sampleGroundY(mapObject, x, z, fromY = 80, far = 120) {
   if (!mapObject) return 0;
   const ray = new THREE.Raycaster();
-  ray.layers.enableAll();
   ray.set(new THREE.Vector3(x, fromY, z), new THREE.Vector3(0, -1, 0));
   ray.far = far;
   const hits = ray.intersectObject(mapObject, true);
@@ -124,7 +88,6 @@ function moveWithSlide(pos, delta, mapObject, radius) {
   if (!mapObject) return pos.clone().add(delta);
 
   const ray = new THREE.Raycaster();
-  ray.layers.enableAll();
   const result = pos.clone();
   const heights = [0.35, 0.75, 1.15];
 
@@ -168,21 +131,14 @@ function moveWithSlide(pos, delta, mapObject, radius) {
   return result;
 }
 
-/**
- * Gruda no chão logo ABAIXO/PERTO da posição atual (janela vertical estreita).
- * Isso é essencial numa estrutura com vários andares empilhados na mesma
- * coluna XZ (como a rampa em espiral): em vez de sempre pegar a superfície
- * mais alta do mapa inteiro, pegamos apenas a superfície mais próxima da
- * altura atual do jogador/carro.
- */
 function stickToGround(pos, mapObject, yOffset) {
   if (!mapObject) return pos.y;
 
   const ray = new THREE.Raycaster();
-  ray.layers.enableAll();
-  const origin = new THREE.Vector3(pos.x, pos.y + 2.1, pos.z);
+  // começa bem acima para não nascer embaixo do mapa
+  const origin = new THREE.Vector3(pos.x, pos.y + 40, pos.z);
   ray.set(origin, new THREE.Vector3(0, -1, 0));
-  ray.far = 4.2;
+  ray.far = 80;
 
   const hits = ray.intersectObject(mapObject, true);
   let best = null;
@@ -271,453 +227,35 @@ function Player({ playerRef, inCar, isMoving }) {
 
 useGLTF.preload(CHAR_PATH);
 
-/* =========================================================
-   GEOMETRIA PROCEDURAL DA RAMPA ESPIRAL
-========================================================= */
+function MapWorld({ mapRef, mapBounds, onMapReady }) {
+  const { scene } = useGLTF(MAP_URL);
 
-/** Ponto 3D de um helicoide: ângulo -> posição, com altura crescente. */
-function helixPoint(angle, radius, heightPerTurn, startY) {
-  const y = startY + (angle / (Math.PI * 2)) * heightPerTurn;
-  return new THREE.Vector3(Math.cos(angle) * radius, y, Math.sin(angle) * radius);
-}
+  const model = useMemo(() => {
+    const clone = scene.clone(true);
 
-/**
- * Constrói a superfície dirigível da rampa em espiral como uma fita
- * (ribbon) entre innerRadius e innerRadius+width, subindo heightPerTurn
- * por volta completa, ao longo de `turns` voltas.
- */
-function buildSpiralRampGeometry({
-  innerRadius,
-  width,
-  turns,
-  heightPerTurn,
-  segmentsPerTurn,
-  startY
-}) {
-  const outerRadius = innerRadius + width;
-  const totalAngle = turns * Math.PI * 2;
-  const segments = Math.max(1, Math.round(turns * segmentsPerTurn));
+    // Garante matriz atualizada
+    clone.updateMatrixWorld(true);
 
-  const positions = [];
-  const uvs = [];
-  const indices = [];
+    const box = new THREE.Box3().setFromObject(clone);
+    const size = new THREE.Vector3();
+    box.getSize(size);
 
-  for (let i = 0; i <= segments; i++) {
-    const angle = (i / segments) * totalAngle;
-    const inner = helixPoint(angle, innerRadius, heightPerTurn, startY);
-    const outer = helixPoint(angle, outerRadius, heightPerTurn, startY);
+    const targetSize = 160;
+    const currentSize = Math.max(size.x, size.z, 0.01);
+    const scale = targetSize / currentSize;
+    clone.scale.setScalar(scale);
+    clone.updateMatrixWorld(true);
 
-    positions.push(inner.x, inner.y, inner.z);
-    positions.push(outer.x, outer.y, outer.z);
+    // Centraliza XZ e apoia o chão em Y = 0
+    const box2 = new THREE.Box3().setFromObject(clone);
+    const center = new THREE.Vector3();
+    box2.getCenter(center);
+    clone.position.x -= center.x;
+    clone.position.z -= center.z;
+    clone.position.y -= box2.min.y;
+    clone.updateMatrixWorld(true);
 
-    const v = i / segments;
-    uvs.push(0, v * turns * 2);
-    uvs.push(1, v * turns * 2);
-  }
-
-  for (let i = 0; i < segments; i++) {
-    const a = i * 2; // inner atual
-    const b = i * 2 + 1; // outer atual
-    const c = (i + 1) * 2; // inner próximo
-    const d = (i + 1) * 2 + 1; // outer próximo
-
-    // winding escolhido para normais apontando para cima (+Y)
-    indices.push(a, c, b);
-    indices.push(b, c, d);
-  }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  return geometry;
-}
-
-/**
- * Constrói uma parede vertical fina que acompanha o mesmo helicoide da
- * rampa — usada como guard-rail interno (junto ao núcleo) e externo
- * (na borda da rampa) para impedir que o carro caia.
- */
-function buildHelixWallGeometry({
-  radius,
-  turns,
-  heightPerTurn,
-  segmentsPerTurn,
-  startY,
-  railHeight
-}) {
-  const totalAngle = turns * Math.PI * 2;
-  const segments = Math.max(1, Math.round(turns * segmentsPerTurn));
-
-  const positions = [];
-  const indices = [];
-
-  for (let i = 0; i <= segments; i++) {
-    const angle = (i / segments) * totalAngle;
-    const base = helixPoint(angle, radius, heightPerTurn, startY);
-    positions.push(base.x, base.y, base.z);
-    positions.push(base.x, base.y + railHeight, base.z);
-  }
-
-  for (let i = 0; i < segments; i++) {
-    const a = i * 2;
-    const b = i * 2 + 1;
-    const c = (i + 1) * 2;
-    const d = (i + 1) * 2 + 1;
-
-    indices.push(a, b, c);
-    indices.push(b, d, c);
-  }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  return geometry;
-}
-
-/**
- * Torre de estacionamento com rampa espiral contínua — estágio 1.
- * Substitui o mapa importado do Sketchfab por uma estrutura 100%
- * procedural (praça plana + núcleo + rampa + guard-rails + colunas +
- * vigas de nível), pronta para futura expansão.
- */
-function DriftTower({ mapRef, mapBounds, onMapReady }) {
-  const group = useMemo(() => {
-    const g = new THREE.Group();
-
-    // ---------- Praça / piso base (ambiente propositalmente simples) ----------
-    const plazaGeo = new THREE.BoxGeometry(240, 0.4, 240);
-    const plazaMat = new THREE.MeshStandardMaterial({
-      color: "#6d6d68",
-      roughness: 0.95,
-      metalness: 0.02
-    });
-    const plaza = new THREE.Mesh(plazaGeo, plazaMat);
-    plaza.position.set(0, -0.2, 0);
-    plaza.receiveShadow = true;
-    g.add(plaza);
-
-    // ---------- Núcleo central (poço de circulação) ----------
-    const coreGeo = new THREE.CylinderGeometry(
-      TOWER_CORE_RADIUS,
-      TOWER_CORE_RADIUS + 0.4,
-      TOWER_HEIGHT,
-      32,
-      1,
-      true
-    );
-    const coreMat = new THREE.MeshStandardMaterial({
-      color: "#8d8d87",
-      roughness: 0.92,
-      metalness: 0.06,
-      side: THREE.DoubleSide
-    });
-    const core = new THREE.Mesh(coreGeo, coreMat);
-    core.position.set(TOWER_POS.x, TOWER_POS.y + TOWER_HEIGHT / 2, TOWER_POS.z);
-    core.castShadow = true;
-    core.receiveShadow = true;
-    g.add(core);
-
-    // Laje de cobertura do núcleo (topo)
-    const capGeo = new THREE.CylinderGeometry(
-      TOWER_CORE_RADIUS + 0.4,
-      TOWER_CORE_RADIUS + 0.4,
-      0.3,
-      32
-    );
-    const cap = new THREE.Mesh(capGeo, coreMat);
-    cap.position.set(TOWER_POS.x, TOWER_POS.y + TOWER_HEIGHT + 0.15, TOWER_POS.z);
-    cap.castShadow = true;
-    cap.receiveShadow = true;
-    g.add(cap);
-
-    // ---------- Rampa espiral (piso dirigível) ----------
-    const rampGeo = buildSpiralRampGeometry({
-      innerRadius: RAMP_INNER_RADIUS,
-      width: RAMP_WIDTH,
-      turns: TOWER_LEVELS,
-      heightPerTurn: TOWER_LEVEL_HEIGHT,
-      segmentsPerTurn: RAMP_SEGMENTS_PER_TURN,
-      startY: 0.05
-    });
-    const rampMat = new THREE.MeshStandardMaterial({
-      color: "#5a5a5d",
-      roughness: 0.88,
-      metalness: 0.05,
-      side: THREE.DoubleSide
-    });
-    const ramp = new THREE.Mesh(rampGeo, rampMat);
-    ramp.position.copy(TOWER_POS);
-    ramp.castShadow = true;
-    ramp.receiveShadow = true;
-    g.add(ramp);
-
-    // Parte de baixo da laje da rampa (dá espessura/realismo visto de baixo)
-    const rampUnderGeo = buildSpiralRampGeometry({
-      innerRadius: RAMP_INNER_RADIUS,
-      width: RAMP_WIDTH,
-      turns: TOWER_LEVELS,
-      heightPerTurn: TOWER_LEVEL_HEIGHT,
-      segmentsPerTurn: RAMP_SEGMENTS_PER_TURN,
-      startY: -0.28
-    });
-    const rampUnderMat = new THREE.MeshStandardMaterial({
-      color: "#3f3f42",
-      roughness: 0.95,
-      metalness: 0.04,
-      side: THREE.BackSide
-    });
-    const rampUnder = new THREE.Mesh(rampUnderGeo, rampUnderMat);
-    rampUnder.position.copy(TOWER_POS);
-    rampUnder.receiveShadow = true;
-    g.add(rampUnder);
-
-    // ---------- Guard-rails (interno junto ao núcleo, externo na borda) ----------
-    const innerWallGeo = buildHelixWallGeometry({
-      radius: RAMP_INNER_RADIUS,
-      turns: TOWER_LEVELS,
-      heightPerTurn: TOWER_LEVEL_HEIGHT,
-      segmentsPerTurn: RAMP_SEGMENTS_PER_TURN,
-      startY: 0.05,
-      railHeight: RAIL_HEIGHT
-    });
-    const outerWallGeo = buildHelixWallGeometry({
-      radius: RAMP_OUTER_RADIUS,
-      turns: TOWER_LEVELS,
-      heightPerTurn: TOWER_LEVEL_HEIGHT,
-      segmentsPerTurn: RAMP_SEGMENTS_PER_TURN,
-      startY: 0.05,
-      railHeight: RAIL_HEIGHT
-    });
-    const railMat = new THREE.MeshStandardMaterial({
-      color: "#4a4f52",
-      roughness: 0.55,
-      metalness: 0.4,
-      side: THREE.DoubleSide
-    });
-    const innerRail = new THREE.Mesh(innerWallGeo, railMat);
-    innerRail.position.copy(TOWER_POS);
-    innerRail.castShadow = true;
-    innerRail.receiveShadow = true;
-    g.add(innerRail);
-
-    const outerRail = new THREE.Mesh(outerWallGeo, railMat);
-    outerRail.position.copy(TOWER_POS);
-    outerRail.castShadow = true;
-    outerRail.receiveShadow = true;
-    g.add(outerRail);
-
-    // Corrimão (tubo fino) no topo de cada guard-rail — puramente estético
-    const railCapMat = new THREE.MeshStandardMaterial({
-      color: "#d8d8d2",
-      roughness: 0.4,
-      metalness: 0.5
-    });
-    [RAMP_INNER_RADIUS, RAMP_OUTER_RADIUS].forEach((radius) => {
-      const segs = TOWER_LEVELS * RAMP_SEGMENTS_PER_TURN;
-      const pts = [];
-      for (let i = 0; i <= segs; i++) {
-        const angle = (i / segs) * TOWER_LEVELS * Math.PI * 2;
-        const p = helixPoint(angle, radius, TOWER_LEVEL_HEIGHT, 0.05 + RAIL_HEIGHT);
-        pts.push(p);
-      }
-      const curve = new THREE.CatmullRomCurve3(pts);
-      const tubeGeo = new THREE.TubeGeometry(curve, segs, 0.06, 6, false);
-      const tube = new THREE.Mesh(tubeGeo, railCapMat);
-      tube.position.copy(TOWER_POS);
-      tube.castShadow = true;
-      g.add(tube);
-    });
-
-    // ---------- Colunas de fachada (perímetro, altura total) ----------
-    const columnCount = 28;
-    const columnGeo = new THREE.CylinderGeometry(0.4, 0.46, TOWER_HEIGHT, 8);
-    const columnMat = new THREE.MeshStandardMaterial({
-      color: "#3d4145",
-      roughness: 0.5,
-      metalness: 0.45
-    });
-    for (let i = 0; i < columnCount; i++) {
-      const angle = (i / columnCount) * Math.PI * 2;
-      const col = new THREE.Mesh(columnGeo, columnMat);
-      col.position.set(
-        TOWER_POS.x + Math.cos(angle) * (TOWER_OUTER_RADIUS + 0.22),
-        TOWER_POS.y + TOWER_HEIGHT / 2,
-        TOWER_POS.z + Math.sin(angle) * (TOWER_OUTER_RADIUS + 0.22)
-      );
-      col.castShadow = true;
-      col.receiveShadow = true;
-      g.add(col);
-    }
-
-    // ---------- Vigas de nível (anéis horizontais a cada andar) ----------
-    const beamMat = new THREE.MeshStandardMaterial({
-      color: "#5a5e61",
-      roughness: 0.6,
-      metalness: 0.3
-    });
-    for (let lvl = 0; lvl <= TOWER_LEVELS; lvl++) {
-      const y = lvl * TOWER_LEVEL_HEIGHT;
-      const beamGeo = new THREE.TorusGeometry(TOWER_OUTER_RADIUS + 0.16, 0.22, 8, 48);
-      const beam = new THREE.Mesh(beamGeo, beamMat);
-      beam.rotation.x = Math.PI / 2;
-      beam.position.set(TOWER_POS.x, TOWER_POS.y + y, TOWER_POS.z);
-      beam.castShadow = true;
-      beam.receiveShadow = true;
-      g.add(beam);
-    }
-
-    // ---------- Fachada espelhada (hiper-reflexiva, esconde o interior) ----------
-    // Material tipo "espelho": metalness alto + roughness baixo. As reflexões
-    // vêm do <Environment> adicionado no Canvas (scene.environment), então de
-    // fora só se vê o reflexo do ambiente, nunca o que está dentro da torre.
-    const facadeMat = new THREE.MeshStandardMaterial({
-      color: "#eef5f7",
-      metalness: 1,
-      roughness: 0.04,
-      envMapIntensity: 1.5,
-      side: THREE.DoubleSide
-    });
-
-    // Térreo: parede espelhada ao redor de toda a torre, com um vão (entrada)
-    // alinhado ao início da rampa, para os carros entrarem/saírem.
-    const entranceHalf = FACADE_ENTRANCE_ANGLE / 2;
-    const groundWallGeo = new THREE.CylinderGeometry(
-      TOWER_OUTER_RADIUS,
-      TOWER_OUTER_RADIUS,
-      TOWER_LEVEL_HEIGHT,
-      64,
-      1,
-      true,
-      entranceHalf,
-      Math.PI * 2 - FACADE_ENTRANCE_ANGLE
-    );
-    const groundWall = new THREE.Mesh(groundWallGeo, facadeMat);
-    groundWall.position.set(
-      TOWER_POS.x,
-      TOWER_POS.y + TOWER_LEVEL_HEIGHT / 2,
-      TOWER_POS.z
-    );
-    groundWall.castShadow = true;
-    groundWall.receiveShadow = true;
-    g.add(groundWall);
-
-    // Do 1º andar até o topo: casca espelhada fechada por completo — de fora
-    // não dá pra ver nada do que acontece dentro da torre.
-    const upperWallHeight = TOWER_HEIGHT - TOWER_LEVEL_HEIGHT;
-    const upperWallGeo = new THREE.CylinderGeometry(
-      TOWER_OUTER_RADIUS,
-      TOWER_OUTER_RADIUS,
-      upperWallHeight,
-      64,
-      1,
-      true
-    );
-    const upperWall = new THREE.Mesh(upperWallGeo, facadeMat);
-    upperWall.position.set(
-      TOWER_POS.x,
-      TOWER_POS.y + TOWER_LEVEL_HEIGHT + upperWallHeight / 2,
-      TOWER_POS.z
-    );
-    upperWall.castShadow = true;
-    upperWall.receiveShadow = true;
-    g.add(upperWall);
-
-    // ---------- Topo plano (fim da rampa) com barreira de proteção ----------
-    // Laje plana cobrindo do núcleo até perto das colunas externas — dá
-    // espaço de circulação/manobra em vez da rampa terminar no vazio.
-    const roofOuter = TOWER_OUTER_RADIUS - ROOF_INSET;
-    const roofY = TOWER_POS.y + TOWER_HEIGHT + 0.02;
-    const roofGeo = new THREE.RingGeometry(
-      TOWER_CORE_RADIUS + 0.4,
-      roofOuter,
-      64
-    );
-    const roofMat = new THREE.MeshStandardMaterial({
-      color: "#5a5a5d",
-      roughness: 0.88,
-      metalness: 0.05,
-      side: THREE.DoubleSide
-    });
-    const roof = new THREE.Mesh(roofGeo, roofMat);
-    roof.rotation.x = -Math.PI / 2;
-    roof.position.set(TOWER_POS.x, roofY, TOWER_POS.z);
-    roof.receiveShadow = true;
-    g.add(roof);
-
-    // Barreira (guard-rail) ao redor de toda a circunferência do topo —
-    // o carro colide nela em vez de voar para fora do prédio.
-    const roofRailGeo = new THREE.CylinderGeometry(
-      roofOuter,
-      roofOuter,
-      ROOF_RAIL_HEIGHT,
-      64,
-      1,
-      true
-    );
-    const roofRailMat = new THREE.MeshStandardMaterial({
-      color: "#4a4f52",
-      roughness: 0.5,
-      metalness: 0.45,
-      side: THREE.DoubleSide
-    });
-    const roofRail = new THREE.Mesh(roofRailGeo, roofRailMat);
-    roofRail.position.set(
-      TOWER_POS.x,
-      roofY + ROOF_RAIL_HEIGHT / 2,
-      TOWER_POS.z
-    );
-    roofRail.castShadow = true;
-    roofRail.receiveShadow = true;
-    g.add(roofRail);
-
-    // Corrimão fino no topo da barreira do telhado — mesmo acabamento das
-    // rampas internas.
-    const roofRailCapGeo = new THREE.TorusGeometry(roofOuter, 0.06, 6, 64);
-    const roofRailCap = new THREE.Mesh(roofRailCapGeo, railCapMat);
-    roofRailCap.rotation.x = Math.PI / 2;
-    roofRailCap.position.set(
-      TOWER_POS.x,
-      roofY + ROOF_RAIL_HEIGHT,
-      TOWER_POS.z
-    );
-    roofRailCap.castShadow = true;
-    g.add(roofRailCap);
-
-    // ---------- Base / fundação visível no térreo ----------
-    const baseGeo = new THREE.CylinderGeometry(
-      TOWER_OUTER_RADIUS + 0.6,
-      TOWER_OUTER_RADIUS + 1.2,
-      0.6,
-      40
-    );
-    const baseMat = new THREE.MeshStandardMaterial({
-      color: "#5f5f5a",
-      roughness: 0.95
-    });
-    const base = new THREE.Mesh(baseGeo, baseMat);
-    base.position.set(TOWER_POS.x, TOWER_POS.y - 0.3, TOWER_POS.z);
-    base.receiveShadow = true;
-    g.add(base);
-
-    // A torre não deve aparecer na sua própria reflexão — só o chão da
-    // praça fica na camada padrão; todo o resto da estrutura vai para
-    // STRUCTURE_LAYER, invisível para a câmera do espelho.
-    g.traverse((child) => {
-      if (child === plaza) return;
-      if (child.isMesh) child.layers.set(STRUCTURE_LAYER);
-    });
-
-    // Guarda a referência do material espelhado para a câmera de reflexo
-    // conseguir ligar nela a textura dinâmica (cubemap) assim que estiver
-    // pronta.
-    g.userData.facadeMat = facadeMat;
-
-    g.updateMatrixWorld(true);
-
-    const finalBox = new THREE.Box3().setFromObject(g);
+    const finalBox = new THREE.Box3().setFromObject(clone);
     if (mapBounds) {
       mapBounds.current = {
         minX: finalBox.min.x + 2,
@@ -729,72 +267,25 @@ function DriftTower({ mapRef, mapBounds, onMapReady }) {
       };
     }
 
-    if (onMapReady) {
-      queueMicrotask(() => onMapReady(g));
-    }
-
-    return g;
-  }, [mapBounds, onMapReady]);
-
-  return <primitive ref={mapRef} object={group} />;
-}
-
-/**
- * Espelho de verdade: uma câmera cúbica (CubeCamera) fica plantada dentro
- * da torre e, a cada poucos quadros, fotografa o que está ao redor dela em
- * 360° (carros, o personagem, o chão, o céu). Como toda a estrutura da
- * torre está em STRUCTURE_LAYER — fora do alcance dessa câmera — o que ela
- * enxerga é só o mundo "de fora", e é isso que vira o reflexo aplicado no
- * material espelhado da fachada. É a mesma técnica usada para esferas
- * cromadas em tempo real: uma aproximação por um único ponto, não um
- * reflexo fisicamente exato por pixel, mas o suficiente para mostrar de
- * verdade quem está por perto.
- */
-function MirrorCubeCamera({
-  facadeMatRef,
-  point,
-  resolution = 192,
-  updateEvery = 2
-}) {
-  const { gl, scene } = useThree();
-  const frame = useRef(0);
-
-  const renderTarget = useMemo(() => {
-    return new THREE.WebGLCubeRenderTarget(resolution, {
-      format: THREE.RGBAFormat,
-      generateMipmaps: true,
-      minFilter: THREE.LinearMipmapLinearFilter
+    clone.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
     });
-  }, [resolution]);
 
-  const cubeCamera = useMemo(() => {
-    const cam = new THREE.CubeCamera(0.5, 260, renderTarget);
-    cam.position.copy(point);
-    return cam;
-  }, [renderTarget, point]);
-
-  useEffect(() => {
-    scene.add(cubeCamera);
-    return () => {
-      scene.remove(cubeCamera);
-      renderTarget.dispose();
-    };
-  }, [scene, cubeCamera, renderTarget]);
-
-  useFrame(() => {
-    if (facadeMatRef.current && !facadeMatRef.current.envMap) {
-      facadeMatRef.current.envMap = renderTarget.texture;
-      facadeMatRef.current.needsUpdate = true;
+    if (onMapReady) {
+      // avisa no próximo tick (ref do mapa já montado)
+      queueMicrotask(() => onMapReady(clone));
     }
 
-    frame.current += 1;
-    if (frame.current % updateEvery !== 0) return;
+    return clone;
+  }, [scene, mapBounds, onMapReady]);
 
-    cubeCamera.update(gl, scene);
-  });
-
-  return null;
+  return <primitive ref={mapRef} object={model} />;
 }
+
+useGLTF.preload(MAP_URL);
 
 /* =========================================================
    GARAGEM — estrutura pequena e detalhada
@@ -1318,14 +809,6 @@ function CameraController({ target, inCar, mapRef, carVelocityRef }) {
   const followPath = useRef(true);
   const wasMoving = useRef(false);
 
-  useEffect(() => {
-    // A torre e a garagem vivem em STRUCTURE_LAYER para ficarem fora do
-    // reflexo do espelho (veja MirrorCubeCamera). A câmera principal do
-    // jogo precisa enxergar essa camada também, senão a torre desaparece
-    // da visão normal.
-    camera.layers.enable(STRUCTURE_LAYER);
-  }, [camera]);
-
   useFrame((_, delta) => {
     if (!target.current) return;
 
@@ -1390,7 +873,6 @@ function CameraController({ target, inCar, mapRef, carVelocityRef }) {
 
     if (mapRef.current) {
       const ray = new THREE.Raycaster();
-      ray.layers.enableAll();
       const from = targetPos.clone();
       from.y += 1.2;
       const dir = desiredPos.clone().sub(from).normalize();
@@ -1425,17 +907,9 @@ function Game({ setMessage, carPath, setNearGarage, garageOpen }) {
   const mapRef = useRef();
   const mapBounds = useRef(null);
   const carVelocityRef = useRef(0);
-  const facadeMatRef = useRef(null);
-  const lightRef = useRef();
 
   const [inCar, setInCar] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
-
-  useEffect(() => {
-    if (lightRef.current) {
-      lightRef.current.shadow.camera.layers.enable(STRUCTURE_LAYER);
-    }
-  }, []);
 
   useEffect(() => {
     const down = (e) => {
@@ -1523,15 +997,8 @@ function Game({ setMessage, carPath, setNearGarage, garageOpen }) {
 
   return (
     <>
-      <DriftTower
-        mapRef={mapRef}
-        mapBounds={mapBounds}
-        onMapReady={(g) => {
-          facadeMatRef.current = g.userData.facadeMat;
-        }}
-      />
+      <MapWorld mapRef={mapRef} mapBounds={mapBounds} />
       <GarageMarker mapRef={mapRef} />
-      <MirrorCubeCamera facadeMatRef={facadeMatRef} point={TOWER_MIRROR_POINT} />
 
       <Car
         carRef={carRef}
@@ -1563,21 +1030,14 @@ function Game({ setMessage, carPath, setNearGarage, garageOpen }) {
 
       <ambientLight intensity={1.15} />
       <directionalLight
-        ref={lightRef}
-        position={[60, 90, 40]}
+        position={[40, 55, 25]}
         intensity={2.3}
         castShadow
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
-        shadow-camera-left={-120}
-        shadow-camera-right={120}
-        shadow-camera-top={120}
-        shadow-camera-bottom={-120}
-        shadow-camera-near={1}
-        shadow-camera-far={300}
       />
       <hemisphereLight args={["#87ceeb", "#4a5a4a", 0.5]} />
-      <fog attach="fog" args={["#b0c4d0", 60, 230]} />
+      <fog attach="fog" args={["#b0c4d0", 50, 140]} />
     </>
   );
 }
@@ -1780,7 +1240,7 @@ function App() {
           <div className="menu-card">
             <div className="logo">MINI CITY</div>
             <div className="subtitle">OPEN WORLD 3D</div>
-            <p>Torre com rampa espiral · E = carro · G = garagem</p>
+            <p>Mapa local · E = carro · G = garagem</p>
             <button className="play-button" onClick={() => setStarted(true)}>
               JOGAR
             </button>
@@ -1798,11 +1258,10 @@ function App() {
           <Canvas
             shadows
             dpr={[1, 1.5]}
-            camera={{ position: [0, 20, 25], fov: 55, near: 0.1, far: 500 }}
+            camera={{ position: [0, 20, 25], fov: 55, near: 0.1, far: 400 }}
             gl={{ antialias: true }}
           >
             <Sky sunPosition={[80, 30, 40]} />
-            <Environment preset="city" background={false} />
             <Game
               setMessage={setMessage}
               carPath={carPath}
