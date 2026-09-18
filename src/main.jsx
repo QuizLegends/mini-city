@@ -27,6 +27,7 @@ import "./style.css";
 
 window.__keys = {};
 window.__joystick = { x: 0, y: 0 };
+window.__pedals = { accel: false, brake: false, reverse: false };
 window.__camera = { yaw: 0, pitch: 0.32 };
 window.__cameraLooked = false;
 
@@ -893,12 +894,20 @@ function Car({
     if (inCar) {
       const keys = window.__keys || {};
       const joy = window.__joystick || { x: 0, y: 0 };
+      const pedals = window.__pedals || { accel: false, brake: false, reverse: false };
 
-      const throttle = keys.w ? 1 : keys.s ? -1 : -joy.y;
+      // Aceleração agora vem só do teclado (W/S, desktop) ou dos pedais
+      // (mobile). O analógico não controla mais o acelerador.
+      let throttle = 0;
+      if (keys.w || pedals.accel) throttle = 1;
+      else if (keys.s || pedals.reverse) throttle = -1;
+
+      // Direção: gradual, proporcional à força aplicada no analógico (eixo X).
       const turn = keys.a ? 1 : keys.d ? -1 : -joy.x;
 
       velocity.current += throttle * 18 * delta;
-      velocity.current *= Math.pow(0.28, delta);
+      // Pedal de freio: desaceleração bem mais forte que o arrasto natural.
+      velocity.current *= Math.pow(pedals.brake ? 0.05 : 0.28, delta);
       velocity.current = clamp(velocity.current, -9, 26);
 
       steering.current = THREE.MathUtils.lerp(steering.current, turn, 7 * delta);
@@ -1146,14 +1155,13 @@ function CameraController({ target, inCar, mapRef, carVelocityRef }) {
   return null;
 }
 
-function Game({ setMessage, carPath, setNearGarage, garageOpen }) {
+function Game({ setMessage, carPath, setNearGarage, garageOpen, inCar, setInCar }) {
   const playerRef = useRef();
   const carRef = useRef();
   const mapRef = useRef();
   const mapBounds = useRef(null);
   const carVelocityRef = useRef(0);
 
-  const [inCar, setInCar] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
 
   useEffect(() => {
@@ -1315,7 +1323,7 @@ function GarageMenu({ open, currentId, onSelect, onClose }) {
   );
 }
 
-function Joystick() {
+function Joystick({ round }) {
   const baseRef = useRef();
   const knobRef = useRef();
   const active = useRef(false);
@@ -1325,21 +1333,37 @@ function Joystick() {
     const rect = baseRef.current.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
     const centerY = rect.top + rect.height / 2;
-    const radius = rect.width / 2;
 
-    let x = e.clientX - centerX;
-    let y = e.clientY - centerY;
-    const length = Math.sqrt(x * x + y * y);
-    if (length > radius) {
-      x = (x / length) * radius;
-      y = (y / length) * radius;
-    }
+    if (round) {
+      // Modo a pé: livre nos dois eixos (frente/trás/lados), como antes.
+      const radius = rect.width / 2;
+      let x = e.clientX - centerX;
+      let y = e.clientY - centerY;
+      const length = Math.sqrt(x * x + y * y);
+      if (length > radius) {
+        x = (x / length) * radius;
+        y = (y / length) * radius;
+      }
 
-    window.__joystick.x = x / radius;
-    window.__joystick.y = y / radius;
+      window.__joystick.x = x / radius;
+      window.__joystick.y = y / radius;
 
-    if (knobRef.current) {
-      knobRef.current.style.transform = `translate(${x}px, ${y}px)`;
+      if (knobRef.current) {
+        knobRef.current.style.transform = `translate(${x}px, ${y}px)`;
+      }
+    } else {
+      // Modo no carro: só horizontal (virar esquerda/direita), gradual.
+      const halfWidth = rect.width / 2 - 6;
+      let x = e.clientX - centerX;
+      if (x > halfWidth) x = halfWidth;
+      if (x < -halfWidth) x = -halfWidth;
+
+      window.__joystick.x = x / halfWidth;
+      window.__joystick.y = 0;
+
+      if (knobRef.current) {
+        knobRef.current.style.transform = `translate(${x}px, 0px)`;
+      }
     }
   }
 
@@ -1358,6 +1382,14 @@ function Joystick() {
     }
   }
 
+  const baseStyle = round
+    ? { width: 120, height: 120, borderRadius: "50%" }
+    : { width: 176, height: 64, borderRadius: 14 };
+
+  const knobStyle = round
+    ? { width: 54, height: 54, borderRadius: "50%" }
+    : { width: 52, height: 52, borderRadius: 10 };
+
   return (
     <div
       className="joystick"
@@ -1369,8 +1401,9 @@ function Joystick() {
       onPointerLeave={() => {
         if (active.current) end();
       }}
+      style={baseStyle}
     >
-      <div className="joystick-knob" ref={knobRef} />
+      <div className="joystick-knob" ref={knobRef} style={knobStyle} />
     </div>
   );
 }
@@ -1379,6 +1412,13 @@ function ActionButton() {
   return (
     <button
       className="action-button"
+      style={{
+        fontSize: 16,
+        position: "fixed",
+        right: 20,
+        bottom: 214,
+        zIndex: 20
+      }}
       onPointerDown={() => {
         if (window.__toggleCar) window.__toggleCar();
       }}
@@ -1392,6 +1432,7 @@ function GarageButton({ visible }) {
   return (
     <button
       className={"garage-button" + (visible ? " visible" : "")}
+      style={{ fontSize: 16 }}
       onPointerDown={() => {
         if (window.__openGarageIfNear) window.__openGarageIfNear();
       }}
@@ -1399,6 +1440,79 @@ function GarageButton({ visible }) {
       G
     </button>
   );
+}
+
+function Pedals() {
+  function bind(field) {
+    return {
+      onPointerDown: (e) => {
+        e.preventDefault();
+        window.__pedals[field] = true;
+      },
+      onPointerUp: () => {
+        window.__pedals[field] = false;
+      },
+      onPointerCancel: () => {
+        window.__pedals[field] = false;
+      },
+      onPointerLeave: () => {
+        window.__pedals[field] = false;
+      }
+    };
+  }
+
+  return (
+    <div
+      className="pedals"
+      style={{
+        position: "fixed",
+        right: 20,
+        bottom: 24,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        zIndex: 20
+      }}
+    >
+      <button
+        className="pedal pedal-accel"
+        {...bind("accel")}
+        style={pedalStyle("#2fae4e")}
+      >
+        ACEL
+      </button>
+      <button
+        className="pedal pedal-brake"
+        {...bind("brake")}
+        style={pedalStyle("#d9432e")}
+      >
+        FREIO
+      </button>
+      <button
+        className="pedal pedal-reverse"
+        {...bind("reverse")}
+        style={pedalStyle("#4a6cf7")}
+      >
+        RÉ
+      </button>
+    </div>
+  );
+}
+
+function pedalStyle(bg) {
+  return {
+    width: 88,
+    height: 52,
+    borderRadius: 10,
+    border: "none",
+    background: bg,
+    color: "#fff",
+    fontWeight: 700,
+    fontSize: 13,
+    letterSpacing: 0.5,
+    userSelect: "none",
+    touchAction: "none"
+  };
 }
 
 function CameraTouch() {
@@ -1410,7 +1524,8 @@ function CameraTouch() {
       e.target.closest(".joystick") ||
       e.target.closest(".action-button") ||
       e.target.closest(".garage-button") ||
-      e.target.closest(".garage-panel")
+      e.target.closest(".garage-panel") ||
+      e.target.closest(".pedals")
     )
       return;
     active.current = true;
@@ -1457,6 +1572,7 @@ function App() {
   const [nearGarage, setNearGarage] = useState(false);
   const [garageOpen, setGarageOpen] = useState(false);
   const [carId, setCarId] = useState("350z");
+  const [inCar, setInCar] = useState(false);
 
   const carPath =
     CAR_CATALOG.find((c) => c.id === carId)?.file || "/models/350z.glb";
@@ -1512,6 +1628,8 @@ function App() {
               carPath={carPath}
               setNearGarage={setNearGarage}
               garageOpen={garageOpen}
+              inCar={inCar}
+              setInCar={setInCar}
             />
           </Canvas>
 
@@ -1530,11 +1648,18 @@ function App() {
             GARAGEM — aperte G
           </div>
 
-          <Joystick />
+          {inCar ? (
+            <>
+              <Joystick round={false} />
+              <Pedals />
+            </>
+          ) : (
+            <Joystick round />
+          )}
           <ActionButton />
           <GarageButton visible={nearGarage && !garageOpen} />
           <div className="camera-help">
-            Arraste: 360° fixo · Acelerar/ré: câmera do caminho
+            Arraste: 360° fixo · Analógico: virar · Pedais: acelerar/freio/ré
           </div>
 
           <GarageMenu
