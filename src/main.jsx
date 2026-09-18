@@ -82,7 +82,7 @@ const TRACK_START_Z = GARAGE_POS.z + TRACK_GAP_SPACES * GARAGE_SPACE_UNIT;
 // o centro (x) da pista é deslocado para a direita na mesma medida da metade
 // da extensão, mantendo a borda esquerda fixa.
 const TRACK_WIDTH_BASE = 16;
-const TRACK_RIGHT_EXTRA_SPACES = 2;
+const TRACK_RIGHT_EXTRA_SPACES = 5;
 const TRACK_RIGHT_EXTRA = TRACK_RIGHT_EXTRA_SPACES * GARAGE_SPACE_UNIT;
 const TRACK_WIDTH = TRACK_WIDTH_BASE + TRACK_RIGHT_EXTRA;
 const TRACK_X = TRACK_RIGHT_EXTRA / 2;
