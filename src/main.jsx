@@ -83,10 +83,38 @@ const TRACK_START_Z = GARAGE_POS.z + TRACK_GAP_SPACES * GARAGE_SPACE_UNIT;
 // mantendo a outra borda fixa. Na prática (confirmado visualmente) o lado
 // direito corresponde ao eixo -X, não +X.
 const TRACK_WIDTH_BASE = 16;
-const TRACK_RIGHT_EXTRA_SPACES = 1;
+const TRACK_RIGHT_EXTRA_SPACES = 2;
 const TRACK_RIGHT_EXTRA = TRACK_RIGHT_EXTRA_SPACES * GARAGE_SPACE_UNIT;
 const TRACK_WIDTH = TRACK_WIDTH_BASE + TRACK_RIGHT_EXTRA;
 const TRACK_X = -TRACK_RIGHT_EXTRA / 2;
+
+/* =========================================================
+   TEXTURA DO CHÃO DA PISTA (uma única imagem, posição e
+   tamanho 100% controláveis por número)
+========================================================= */
+
+// Coloque sua imagem em public/textures/pista-chao.jpg (ou troque o caminho
+// abaixo para onde você salvar o arquivo).
+const TRACK_FLOOR_IMAGE = "/textures/chao.jpg";
+
+// Posição do CENTRO da área com a textura, em unidades de mundo:
+// - X: 0 = alinhado com a reta do spawn. Positivo = direção -X real
+//   (lembrando: nesse projeto "direita" corresponde ao eixo -X).
+//   Use TRACK_X pra deixar centralizado com a pista atual, ou qualquer
+//   outro número pra mover a textura livremente.
+// - Z: por padrão, logo depois do início da pista (TRACK_START_Z).
+const TRACK_FLOOR_X = TRACK_X;
+const TRACK_FLOOR_Z = TRACK_START_Z + 6; // mude este número pra mover a textura pra frente/trás
+
+// Tamanho da área coberta pela textura (em unidades de mundo):
+const TRACK_FLOOR_WIDTH = TRACK_WIDTH; // largura (eixo X)
+const TRACK_FLOOR_LENGTH = 12; // comprimento (eixo Z) — controla "até onde" ela vai
+
+// Repetição da imagem dentro dessa área (1 = a imagem esticada preenche toda
+// a área de uma vez só; 2 = repete 2x, etc.)
+const TRACK_FLOOR_REPEAT_X = 1;
+const TRACK_FLOOR_REPEAT_Y = 1;
+
 
 // Giro de 90° (1/4 de 360°) para a direita: o portão, que apontava para +Z,
 // passa a apontar para +X (fica virado para o lado direito).
@@ -374,6 +402,33 @@ function buildStraightTrack({ startZ, length, width, x = 0 }) {
   return group;
 }
 
+/**
+ * Cria um "adesivo" (decal) retangular no chão com uma única imagem,
+ * na posição e tamanho definidos pelas constantes TRACK_FLOOR_*.
+ */
+function buildTrackFloorImage({ x, z, width, length, repeatX, repeatY }) {
+  const texture = new THREE.TextureLoader().load(TRACK_FLOOR_IMAGE);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(repeatX, repeatY);
+  texture.anisotropy = 8;
+  texture.colorSpace = THREE.SRGBColorSpace;
+
+  const material = new THREE.MeshStandardMaterial({
+    map: texture,
+    roughness: 0.9,
+    metalness: 0
+  });
+
+  const geometry = new THREE.PlaneGeometry(width, length, 1, 1);
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.rotation.x = -Math.PI / 2;
+  // Levemente acima do topo do asfalto (y = 0) pra não brigar com ele (z-fighting).
+  mesh.position.set(x, 0.006, z);
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
 function MapWorld({ mapRef, mapBounds, onMapReady }) {
   const { scene } = useGLTF(MAP_URL);
 
@@ -413,6 +468,18 @@ function MapWorld({ mapRef, mapBounds, onMapReady }) {
       x: TRACK_X
     });
     clone.add(track);
+
+    // Imagem de chão sobreposta na pista, na posição e tamanho definidos
+    // pelas constantes TRACK_FLOOR_* (edite lá em cima pra mover/redimensionar).
+    const floorImage = buildTrackFloorImage({
+      x: TRACK_FLOOR_X,
+      z: TRACK_FLOOR_Z,
+      width: TRACK_FLOOR_WIDTH,
+      length: TRACK_FLOOR_LENGTH,
+      repeatX: TRACK_FLOOR_REPEAT_X,
+      repeatY: TRACK_FLOOR_REPEAT_Y
+    });
+    clone.add(floorImage);
     clone.updateMatrixWorld(true);
 
     const finalBox = new THREE.Box3().setFromObject(clone);
