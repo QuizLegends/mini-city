@@ -270,6 +270,103 @@ function Player({ playerRef, inCar, isMoving }) {
 
 useGLTF.preload(CHAR_PATH);
 
+/**
+ * Pista reta que começa exatamente no limite do mapa importado (no eixo Z,
+ * a mesma reta que sai do spawn) e segue em frente por uma longa distância,
+ * com barreiras metálicas dos dois lados (e uma no final) para o carro não
+ * sair da pista nem cair no vazio.
+ */
+function buildStraightTrack({ startZ, length, width, x = 0 }) {
+  const group = new THREE.Group();
+
+  // Pista de asfalto
+  const roadGeo = new THREE.BoxGeometry(width, 0.3, length);
+  const roadMat = new THREE.MeshStandardMaterial({
+    color: "#3a3a3d",
+    roughness: 0.9,
+    metalness: 0.05
+  });
+  const road = new THREE.Mesh(roadGeo, roadMat);
+  road.position.set(x, -0.15, startZ + length / 2);
+  road.receiveShadow = true;
+  group.add(road);
+
+  // Faixa central tracejada
+  const stripeMat = new THREE.MeshStandardMaterial({ color: "#e8d23a", roughness: 0.6 });
+  const stripeSpacing = 6;
+  const stripeCount = Math.floor(length / stripeSpacing);
+  for (let i = 0; i < stripeCount; i++) {
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.02, 3), stripeMat);
+    stripe.position.set(x, 0.005, startZ + i * stripeSpacing + 2);
+    group.add(stripe);
+  }
+
+  // Faixas de borda (brancas), perto das barreiras
+  [-1, 1].forEach((side) => {
+    const edge = new THREE.Mesh(
+      new THREE.BoxGeometry(0.25, 0.02, length - 2),
+      new THREE.MeshStandardMaterial({ color: "#e9e9e4", roughness: 0.6 })
+    );
+    edge.position.set(x + side * (width / 2 - 0.6), 0.005, startZ + length / 2);
+    group.add(edge);
+  });
+
+  // Barreiras metálicas laterais (impedem sair da pista)
+  const barrierHeight = 0.9;
+  const barrierMat = new THREE.MeshStandardMaterial({
+    color: "#4a4f52",
+    roughness: 0.55,
+    metalness: 0.4
+  });
+  [-1, 1].forEach((side) => {
+    const barrier = new THREE.Mesh(
+      new THREE.BoxGeometry(0.3, barrierHeight, length),
+      barrierMat
+    );
+    barrier.position.set(
+      x + side * (width / 2 + 0.15),
+      barrierHeight / 2,
+      startZ + length / 2
+    );
+    barrier.castShadow = true;
+    barrier.receiveShadow = true;
+    group.add(barrier);
+
+    // Postes de sustentação a cada ~10 unidades (só visual)
+    const postCount = Math.floor(length / 10);
+    const postMat = new THREE.MeshStandardMaterial({
+      color: "#2b2f33",
+      roughness: 0.5,
+      metalness: 0.5
+    });
+    for (let i = 0; i <= postCount; i++) {
+      const post = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.08, 0.08, barrierHeight + 0.2, 6),
+        postMat
+      );
+      post.position.set(
+        x + side * (width / 2 + 0.15),
+        (barrierHeight + 0.2) / 2,
+        startZ + i * 10
+      );
+      post.castShadow = true;
+      group.add(post);
+    }
+  });
+
+  // Barreira no final da pista (evita voar pra fora do fim da reta)
+  const endBarrier = new THREE.Mesh(
+    new THREE.BoxGeometry(width + 0.6, barrierHeight, 0.3),
+    barrierMat
+  );
+  endBarrier.position.set(x, barrierHeight / 2, startZ + length - 0.15);
+  endBarrier.castShadow = true;
+  endBarrier.receiveShadow = true;
+  group.add(endBarrier);
+
+  return group;
+}
+
 function MapWorld({ mapRef, mapBounds, onMapReady }) {
   const { scene } = useGLTF(MAP_URL);
 
@@ -296,6 +393,19 @@ function MapWorld({ mapRef, mapBounds, onMapReady }) {
     clone.position.x -= center.x;
     clone.position.z -= center.z;
     clone.position.y -= box2.min.y;
+    clone.updateMatrixWorld(true);
+
+    // Limite atual do mapa importado (na mesma reta do spawn, eixo Z)
+    const importedMapBox = new THREE.Box3().setFromObject(clone);
+
+    // Continuação: pista reta bem grande, começando exatamente onde o mapa acaba
+    const track = buildStraightTrack({
+      startZ: importedMapBox.max.z,
+      length: 400,
+      width: 16,
+      x: 0
+    });
+    clone.add(track);
     clone.updateMatrixWorld(true);
 
     const finalBox = new THREE.Box3().setFromObject(clone);
