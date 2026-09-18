@@ -1450,7 +1450,7 @@ function GarageButton({ visible }) {
         fontSize: 16,
         position: "fixed",
         right: 20,
-        bottom: 116,
+        bottom: 108,
         zIndex: 20
       }}
       onPointerDown={() => {
@@ -1515,16 +1515,18 @@ function pedalStyle(isPressed) {
     height: 82,
     borderRadius: 10,
     border: "1px solid rgba(255,255,255,0.22)",
-    background: isPressed ? "rgba(80,80,80,0.55)" : "rgba(150,150,150,0.32)",
+    // Importante: backgroundColor (não o atalho "background"), pra não
+    // resetar/sumir o backgroundImage (os furinhos) a cada troca de estado.
+    backgroundColor: isPressed ? "rgba(80,80,80,0.55)" : "rgba(150,150,150,0.32)",
     backgroundImage:
-      "radial-gradient(circle, rgba(0,0,0,0.4) 1.3px, transparent 1.5px)",
+      "radial-gradient(circle, rgba(255,255,255,0.5) 1.3px, transparent 1.5px)",
     backgroundSize: "9px 9px",
     backgroundPosition: "center",
     boxShadow: isPressed
       ? "inset 0 4px 8px rgba(0,0,0,0.55)"
       : "0 3px 6px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.18)",
     transform: isPressed ? "translateY(5px) scale(0.94)" : "translateY(0) scale(1)",
-    transition: "transform 70ms ease, box-shadow 70ms ease, background 70ms ease",
+    transition: "transform 70ms ease, box-shadow 70ms ease, background-color 70ms ease",
     userSelect: "none",
     touchAction: "none",
     WebkitTapHighlightColor: "transparent",
