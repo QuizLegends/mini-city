@@ -77,6 +77,16 @@ const GARAGE_RADIUS = 7;
 const TRACK_GAP_SPACES = -9;
 const TRACK_START_Z = GARAGE_POS.z + TRACK_GAP_SPACES * GARAGE_SPACE_UNIT;
 
+// Largura da pista: base + extensão apenas para o lado direito (quem está de
+// frente para o mapa, saindo do spawn). O lado esquerdo não muda — por isso
+// o centro (x) da pista é deslocado para a direita na mesma medida da metade
+// da extensão, mantendo a borda esquerda fixa.
+const TRACK_WIDTH_BASE = 16;
+const TRACK_RIGHT_EXTRA_SPACES = 2;
+const TRACK_RIGHT_EXTRA = TRACK_RIGHT_EXTRA_SPACES * GARAGE_SPACE_UNIT;
+const TRACK_WIDTH = TRACK_WIDTH_BASE + TRACK_RIGHT_EXTRA;
+const TRACK_X = TRACK_RIGHT_EXTRA / 2;
+
 // Giro de 90° (1/4 de 360°) para a direita: o portão, que apontava para +Z,
 // passa a apontar para +X (fica virado para o lado direito).
 const GARAGE_ROTATION_Y = -Math.PI / 2;
@@ -297,16 +307,6 @@ function buildStraightTrack({ startZ, length, width, x = 0 }) {
   road.receiveShadow = true;
   group.add(road);
 
-  // Faixas de borda (brancas), perto das barreiras
-  [-1, 1].forEach((side) => {
-    const edge = new THREE.Mesh(
-      new THREE.BoxGeometry(0.25, 0.02, length - 2),
-      new THREE.MeshStandardMaterial({ color: "#e9e9e4", roughness: 0.6 })
-    );
-    edge.position.set(x + side * (width / 2 - 0.6), 0.005, startZ + length / 2);
-    group.add(edge);
-  });
-
   // Barreiras metálicas laterais (impedem sair da pista)
   const barrierHeight = 0.9;
   const barrierMat = new THREE.MeshStandardMaterial({
@@ -360,6 +360,16 @@ function buildStraightTrack({ startZ, length, width, x = 0 }) {
   endBarrier.receiveShadow = true;
   group.add(endBarrier);
 
+  // Barreira no início da pista (mesmo modelo das laterais/final, fechando a entrada)
+  const startBarrier = new THREE.Mesh(
+    new THREE.BoxGeometry(width + 0.6, barrierHeight, 0.3),
+    barrierMat
+  );
+  startBarrier.position.set(x, barrierHeight / 2, startZ + 0.15);
+  startBarrier.castShadow = true;
+  startBarrier.receiveShadow = true;
+  group.add(startBarrier);
+
   return group;
 }
 
@@ -391,14 +401,15 @@ function MapWorld({ mapRef, mapBounds, onMapReady }) {
     clone.position.y -= box2.min.y;
     clone.updateMatrixWorld(true);
 
-    // Continuação: pista reta bem grande, começando 5 espaços à frente da
-    // garagem (na mesma reta do spawn, eixo Z / X = 0), bem perto da cidade
-    // em vez de longe, no limite do mapa importado.
+    // Continuação: pista reta bem grande, começando alguns espaços à frente
+    // da garagem (na mesma reta do spawn, eixo Z / X = 0). Largura estendida
+    // apenas para o lado direito (+X, sentido de quem sai da garagem virando
+    // à direita), mantendo a borda esquerda no mesmo lugar.
     const track = buildStraightTrack({
       startZ: TRACK_START_Z,
       length: 400,
-      width: 16,
-      x: 0
+      width: TRACK_WIDTH,
+      x: TRACK_X
     });
     clone.add(track);
     clone.updateMatrixWorld(true);
