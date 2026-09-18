@@ -1067,6 +1067,10 @@ function CameraController({ target, inCar, mapRef, carVelocityRef }) {
   const smoothPos = useRef(null);
   const followPath = useRef(true);
   const wasMoving = useRef(false);
+  // "Modo ré" da câmera: fica travado em ré até o carro voltar a acelerar
+  // pra frente (não volta sozinho só porque a velocidade caiu perto de 0,
+  // por exemplo ao frear ou soltar o acelerador).
+  const reverseMode = useRef(false);
 
   useFrame((_, delta) => {
     if (!target.current) return;
@@ -1075,6 +1079,10 @@ function CameraController({ target, inCar, mapRef, carVelocityRef }) {
     const dt = Math.min(delta, 0.05);
     const speed = carVelocityRef?.current ?? 0;
     const moving = Math.abs(speed) > 1.0;
+
+    if (speed > 1.0) reverseMode.current = false;
+    else if (speed < -1.0) reverseMode.current = true;
+    // Entre -1 e 1 (parado/freando): mantém o modo atual, não alterna sozinho.
 
     if (inCar && moving && !wasMoving.current) {
       followPath.current = true;
@@ -1096,12 +1104,13 @@ function CameraController({ target, inCar, mapRef, carVelocityRef }) {
       const forward = new THREE.Vector3(0, 0, 1);
       forward.applyQuaternion(target.current.quaternion);
 
-      const reversing = speed < -1.0;
+      const reversing = reverseMode.current;
       const travel = reversing ? forward.clone().negate() : forward;
 
       desiredYaw = Math.atan2(travel.x, travel.z) + Math.PI;
       desiredPitch = 0.3;
-      desiredDist = 13;
+      // Câmera de frente mais próxima do carro; a de ré fica como estava.
+      desiredDist = reversing ? 13 : 9;
       lookHeight = 1.15;
       turnSpeed = moving ? 5.5 : 3.5;
 
@@ -1421,7 +1430,7 @@ function ActionButton() {
         fontSize: 16,
         position: "fixed",
         right: 20,
-        bottom: 112,
+        bottom: 180,
         zIndex: 20
       }}
       onPointerDown={() => {
@@ -1437,7 +1446,13 @@ function GarageButton({ visible }) {
   return (
     <button
       className={"garage-button" + (visible ? " visible" : "")}
-      style={{ fontSize: 16 }}
+      style={{
+        fontSize: 16,
+        position: "fixed",
+        right: 20,
+        bottom: 116,
+        zIndex: 20
+      }}
       onPointerDown={() => {
         if (window.__openGarageIfNear) window.__openGarageIfNear();
       }}
