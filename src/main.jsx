@@ -912,8 +912,13 @@ function Car({
 
       steering.current = THREE.MathUtils.lerp(steering.current, turn, 7 * delta);
 
+      // Em marcha ré, inverte o sentido da curva: virar "direita" no
+      // analógico deve continuar parecendo "direita" na tela, mesmo
+      // andando pra trás.
+      const reverseFlip = velocity.current < 0 ? -1 : 1;
+
       carRef.current.rotation.y +=
-        steering.current * delta * 1.6 * Math.min(1, Math.abs(velocity.current) / 4);
+        steering.current * reverseFlip * delta * 1.6 * Math.min(1, Math.abs(velocity.current) / 4);
 
       const forward = new THREE.Vector3(0, 0, 1);
       forward.applyQuaternion(carRef.current.quaternion);
@@ -1416,7 +1421,7 @@ function ActionButton() {
         fontSize: 16,
         position: "fixed",
         right: 20,
-        bottom: 214,
+        bottom: 112,
         zIndex: 20
       }}
       onPointerDown={() => {
@@ -1443,75 +1448,72 @@ function GarageButton({ visible }) {
 }
 
 function Pedals() {
+  const [pressed, setPressed] = useState({ reverse: false, brake: false, accel: false });
+
   function bind(field) {
     return {
       onPointerDown: (e) => {
         e.preventDefault();
         window.__pedals[field] = true;
+        setPressed((p) => ({ ...p, [field]: true }));
       },
       onPointerUp: () => {
         window.__pedals[field] = false;
+        setPressed((p) => ({ ...p, [field]: false }));
       },
       onPointerCancel: () => {
         window.__pedals[field] = false;
+        setPressed((p) => ({ ...p, [field]: false }));
       },
       onPointerLeave: () => {
         window.__pedals[field] = false;
+        setPressed((p) => ({ ...p, [field]: false }));
       }
     };
   }
 
+  // Ordem da esquerda pra direita, igual um carro real: ré, freio, acelerador.
   return (
     <div
       className="pedals"
       style={{
         position: "fixed",
         right: 20,
-        bottom: 24,
+        bottom: 20,
         display: "flex",
-        flexDirection: "column",
-        gap: 10,
+        flexDirection: "row",
+        alignItems: "flex-end",
+        gap: 12,
         zIndex: 20
       }}
     >
-      <button
-        className="pedal pedal-accel"
-        {...bind("accel")}
-        style={pedalStyle("#2fae4e")}
-      >
-        ACEL
-      </button>
-      <button
-        className="pedal pedal-brake"
-        {...bind("brake")}
-        style={pedalStyle("#d9432e")}
-      >
-        FREIO
-      </button>
-      <button
-        className="pedal pedal-reverse"
-        {...bind("reverse")}
-        style={pedalStyle("#4a6cf7")}
-      >
-        RÉ
-      </button>
+      <button className="pedal" {...bind("reverse")} style={pedalStyle(pressed.reverse)} />
+      <button className="pedal" {...bind("brake")} style={pedalStyle(pressed.brake)} />
+      <button className="pedal" {...bind("accel")} style={pedalStyle(pressed.accel)} />
     </div>
   );
 }
 
-function pedalStyle(bg) {
+function pedalStyle(isPressed) {
   return {
-    width: 88,
-    height: 52,
+    width: 60,
+    height: 82,
     borderRadius: 10,
-    border: "none",
-    background: bg,
-    color: "#fff",
-    fontWeight: 700,
-    fontSize: 13,
-    letterSpacing: 0.5,
+    border: "1px solid rgba(255,255,255,0.22)",
+    background: isPressed ? "rgba(80,80,80,0.55)" : "rgba(150,150,150,0.32)",
+    backgroundImage:
+      "radial-gradient(circle, rgba(0,0,0,0.4) 1.3px, transparent 1.5px)",
+    backgroundSize: "9px 9px",
+    backgroundPosition: "center",
+    boxShadow: isPressed
+      ? "inset 0 4px 8px rgba(0,0,0,0.55)"
+      : "0 3px 6px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.18)",
+    transform: isPressed ? "translateY(5px) scale(0.94)" : "translateY(0) scale(1)",
+    transition: "transform 70ms ease, box-shadow 70ms ease, background 70ms ease",
     userSelect: "none",
-    touchAction: "none"
+    touchAction: "none",
+    WebkitTapHighlightColor: "transparent",
+    backdropFilter: "blur(1px)"
   };
 }
 
@@ -1594,15 +1596,57 @@ function App() {
     setMessage("Carro: " + car.name);
   }
 
+  function startGame() {
+    setStarted(true);
+    // Tenta ir pra tela cheia + travar em paisagem (funciona em boa parte do
+    // Android/Chrome). Em navegadores sem suporte (ex: iOS Safari), o CSS
+    // abaixo (@media orientation: portrait) já cuida de girar a tela.
+    const el = document.documentElement;
+    const requestFs =
+      el.requestFullscreen ||
+      el.webkitRequestFullscreen ||
+      el.msRequestFullscreen;
+    try {
+      if (requestFs) {
+        requestFs
+          .call(el)
+          .then(() => {
+            if (screen.orientation && screen.orientation.lock) {
+              screen.orientation.lock("landscape").catch(() => {});
+            }
+          })
+          .catch(() => {});
+      } else if (screen.orientation && screen.orientation.lock) {
+        screen.orientation.lock("landscape").catch(() => {});
+      }
+    } catch (e) {
+      // Sem suporte — o fallback de CSS (rotação) assume o controle.
+    }
+  }
+
   return (
     <div className="app">
+      <style>{`
+        @media screen and (max-width: 950px) and (orientation: portrait) {
+          html, body { overflow: hidden; }
+          .app {
+            position: absolute;
+            top: 0;
+            left: 100%;
+            width: 100vh;
+            height: 100vw;
+            transform-origin: 0 0;
+            transform: rotate(90deg);
+          }
+        }
+      `}</style>
       {!started && (
         <div className="menu">
           <div className="menu-card">
             <div className="logo">MINI CITY</div>
             <div className="subtitle">OPEN WORLD 3D</div>
             <p>Mapa local · E = carro · G = garagem</p>
-            <button className="play-button" onClick={() => setStarted(true)}>
+            <button className="play-button" onClick={startGame}>
               JOGAR
             </button>
             <div className="controls-info">
