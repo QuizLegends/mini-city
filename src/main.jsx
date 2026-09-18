@@ -1450,7 +1450,7 @@ function GarageButton({ visible }) {
         fontSize: 16,
         position: "fixed",
         right: 20,
-        bottom: 108,
+        bottom: 95,
         zIndex: 20
       }}
       onPointerDown={() => {
