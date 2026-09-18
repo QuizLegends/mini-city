@@ -71,6 +71,10 @@ const GARAGE_POS = new THREE.Vector3(
 );
 const GARAGE_RADIUS = 7;
 
+// A pista deve começar 5 "espaços" (GARAGE_SPACE_UNIT) à frente da garagem,
+// medidos sobre a mesma reta do spawn (eixo Z, com X = 0).
+const TRACK_START_Z = GARAGE_POS.z + 5 * GARAGE_SPACE_UNIT;
+
 // Giro de 90° (1/4 de 360°) para a direita: o portão, que apontava para +Z,
 // passa a apontar para +X (fica virado para o lado direito).
 const GARAGE_ROTATION_Y = -Math.PI / 2;
@@ -291,16 +295,6 @@ function buildStraightTrack({ startZ, length, width, x = 0 }) {
   road.receiveShadow = true;
   group.add(road);
 
-  // Faixa central tracejada
-  const stripeMat = new THREE.MeshStandardMaterial({ color: "#e8d23a", roughness: 0.6 });
-  const stripeSpacing = 6;
-  const stripeCount = Math.floor(length / stripeSpacing);
-  for (let i = 0; i < stripeCount; i++) {
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.02, 3), stripeMat);
-    stripe.position.set(x, 0.005, startZ + i * stripeSpacing + 2);
-    group.add(stripe);
-  }
-
   // Faixas de borda (brancas), perto das barreiras
   [-1, 1].forEach((side) => {
     const edge = new THREE.Mesh(
@@ -395,12 +389,11 @@ function MapWorld({ mapRef, mapBounds, onMapReady }) {
     clone.position.y -= box2.min.y;
     clone.updateMatrixWorld(true);
 
-    // Limite atual do mapa importado (na mesma reta do spawn, eixo Z)
-    const importedMapBox = new THREE.Box3().setFromObject(clone);
-
-    // Continuação: pista reta bem grande, começando exatamente onde o mapa acaba
+    // Continuação: pista reta bem grande, começando 5 espaços à frente da
+    // garagem (na mesma reta do spawn, eixo Z / X = 0), bem perto da cidade
+    // em vez de longe, no limite do mapa importado.
     const track = buildStraightTrack({
-      startZ: importedMapBox.max.z,
+      startZ: TRACK_START_Z,
       length: 400,
       width: 16,
       x: 0
