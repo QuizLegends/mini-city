@@ -79,13 +79,14 @@ const TRACK_START_Z = GARAGE_POS.z + TRACK_GAP_SPACES * GARAGE_SPACE_UNIT;
 
 // Largura da pista: base + extensão apenas para o lado direito (quem está de
 // frente para o mapa, saindo do spawn). O lado esquerdo não muda — por isso
-// o centro (x) da pista é deslocado para a direita na mesma medida da metade
-// da extensão, mantendo a borda esquerda fixa.
+// o centro (x) da pista é deslocado na mesma medida da metade da extensão,
+// mantendo a outra borda fixa. Na prática (confirmado visualmente) o lado
+// direito corresponde ao eixo -X, não +X.
 const TRACK_WIDTH_BASE = 16;
-const TRACK_RIGHT_EXTRA_SPACES = 5;
+const TRACK_RIGHT_EXTRA_SPACES = 2;
 const TRACK_RIGHT_EXTRA = TRACK_RIGHT_EXTRA_SPACES * GARAGE_SPACE_UNIT;
 const TRACK_WIDTH = TRACK_WIDTH_BASE + TRACK_RIGHT_EXTRA;
-const TRACK_X = TRACK_RIGHT_EXTRA / 2;
+const TRACK_X = -TRACK_RIGHT_EXTRA / 2;
 
 // Giro de 90° (1/4 de 360°) para a direita: o portão, que apontava para +Z,
 // passa a apontar para +X (fica virado para o lado direito).
@@ -403,8 +404,8 @@ function MapWorld({ mapRef, mapBounds, onMapReady }) {
 
     // Continuação: pista reta bem grande, começando alguns espaços à frente
     // da garagem (na mesma reta do spawn, eixo Z / X = 0). Largura estendida
-    // apenas para o lado direito (+X, sentido de quem sai da garagem virando
-    // à direita), mantendo a borda esquerda no mesmo lugar.
+    // apenas para o lado direito (eixo -X), mantendo a outra borda no mesmo
+    // lugar.
     const track = buildStraightTrack({
       startZ: TRACK_START_Z,
       length: 400,
