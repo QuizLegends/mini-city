@@ -88,6 +88,10 @@ const TRACK_RIGHT_EXTRA = TRACK_RIGHT_EXTRA_SPACES * GARAGE_SPACE_UNIT;
 const TRACK_WIDTH = TRACK_WIDTH_BASE + TRACK_RIGHT_EXTRA;
 const TRACK_X = -TRACK_RIGHT_EXTRA / 2;
 
+// Comprimento total da pista (usado também na chamada de buildStraightTrack
+// logo abaixo, pra manter os dois em sincronia).
+const TRACK_LENGTH = 400;
+
 /* =========================================================
    TEXTURA DO CHÃO DA PISTA (uma única imagem, posição e
    tamanho 100% controláveis por número)
@@ -102,18 +106,23 @@ const TRACK_FLOOR_IMAGE = "/textures/chao.jpg";
 //   (lembrando: nesse projeto "direita" corresponde ao eixo -X).
 //   Use TRACK_X pra deixar centralizado com a pista atual, ou qualquer
 //   outro número pra mover a textura livremente.
-// - Z: por padrão, logo depois do início da pista (TRACK_START_Z).
+// - Z: por padrão, centralizada ao longo de toda a pista (do início ao fim).
 const TRACK_FLOOR_X = TRACK_X;
-const TRACK_FLOOR_Z = TRACK_START_Z + 6; // mude este número pra mover a textura pra frente/trás
+const TRACK_FLOOR_Z = TRACK_START_Z + TRACK_LENGTH / 2;
 
-// Tamanho da área coberta pela textura (em unidades de mundo):
+// Tamanho da área coberta pela textura (em unidades de mundo). Por padrão
+// cobre a pista inteira: a largura toda (TRACK_WIDTH) e o comprimento
+// todo (TRACK_LENGTH). Diminua TRACK_FLOOR_LENGTH se quiser voltar a cobrir
+// só um trecho a partir do início.
 const TRACK_FLOOR_WIDTH = TRACK_WIDTH; // largura (eixo X)
-const TRACK_FLOOR_LENGTH = 12; // comprimento (eixo Z) — controla "até onde" ela vai
+const TRACK_FLOOR_LENGTH = TRACK_LENGTH; // comprimento (eixo Z)
 
-// Repetição da imagem dentro dessa área (1 = a imagem esticada preenche toda
-// a área de uma vez só; 2 = repete 2x, etc.)
-const TRACK_FLOOR_REPEAT_X = 1;
-const TRACK_FLOOR_REPEAT_Y = 1;
+// Tamanho real (em unidades de mundo) que UMA cópia da imagem deve ocupar no
+// chão. Se a textura estiver aparecendo gigante (maior que o carro), DIMINUA
+// esse número — ele repete a imagem em vez de esticar uma cópia só por toda
+// a área. Ex.: se a imagem mostra paralelepípedos que na vida real teriam uns
+// 3 metros de um lado a outro, use 3.
+const TRACK_FLOOR_TILE_SIZE = 3;
 
 
 // Giro de 90° (1/4 de 360°) para a direita: o portão, que apontava para +Z,
@@ -406,11 +415,14 @@ function buildStraightTrack({ startZ, length, width, x = 0 }) {
  * Cria um "adesivo" (decal) retangular no chão com uma única imagem,
  * na posição e tamanho definidos pelas constantes TRACK_FLOOR_*.
  */
-function buildTrackFloorImage({ x, z, width, length, repeatX, repeatY }) {
+function buildTrackFloorImage({ x, z, width, length, tileSize }) {
   const texture = new THREE.TextureLoader().load(TRACK_FLOOR_IMAGE);
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(repeatX, repeatY);
+  texture.repeat.set(
+    Math.max(1, width / tileSize),
+    Math.max(1, length / tileSize)
+  );
   texture.anisotropy = 8;
   texture.colorSpace = THREE.SRGBColorSpace;
 
@@ -463,7 +475,7 @@ function MapWorld({ mapRef, mapBounds, onMapReady }) {
     // lugar.
     const track = buildStraightTrack({
       startZ: TRACK_START_Z,
-      length: 400,
+      length: TRACK_LENGTH,
       width: TRACK_WIDTH,
       x: TRACK_X
     });
@@ -476,8 +488,7 @@ function MapWorld({ mapRef, mapBounds, onMapReady }) {
       z: TRACK_FLOOR_Z,
       width: TRACK_FLOOR_WIDTH,
       length: TRACK_FLOOR_LENGTH,
-      repeatX: TRACK_FLOOR_REPEAT_X,
-      repeatY: TRACK_FLOOR_REPEAT_Y
+      tileSize: TRACK_FLOOR_TILE_SIZE
     });
     clone.add(floorImage);
     clone.updateMatrixWorld(true);
