@@ -74,7 +74,7 @@ const GARAGE_RADIUS = 7;
 // A pista deve começar poucos "espaços" (GARAGE_SPACE_UNIT) à frente da
 // garagem, medidos sobre a mesma reta do spawn (eixo Z, com X = 0).
 // Ajuste TRACK_GAP_SPACES para aproximar/afastar a pista da garagem.
-const TRACK_GAP_SPACES = -10;
+const TRACK_GAP_SPACES = -7;
 const TRACK_START_Z = GARAGE_POS.z + TRACK_GAP_SPACES * GARAGE_SPACE_UNIT;
 
 // Giro de 90° (1/4 de 360°) para a direita: o portão, que apontava para +Z,
